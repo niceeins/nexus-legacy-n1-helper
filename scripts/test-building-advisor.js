@@ -9,8 +9,8 @@ function includes(text, message) {
   assert(source.includes(text), message || `Expected source to include ${text}`);
 }
 
-includes('@version      0.7.5', 'userscript header version should be 0.7.5');
-includes('<span class="nlh-version">v0.7.5</span>', 'panel version should be v0.7.5');
+includes('@version      0.7.6', 'userscript header version should be 0.7.6');
+includes('<span class="nlh-version">v0.7.6</span>', 'panel version should be v0.7.6');
 
 [
   'function getBuildingAdvisor(resources, buildings, researchItems, fleetState)',
@@ -50,7 +50,12 @@ includes('<span class="nlh-version">v0.7.5</span>', 'panel version should be v0.
   'item.isCompleted',
   "state: 'erledigt'",
   'prereqs:',
-  "card.querySelectorAll('.prereq",
+  "card.querySelectorAll('.prereq,.prerequisite')",
+  'const isUpgrading',
+  'isUpgrading,',
+  'item.isUpgrading',
+  "actionState = 'läuft'",
+  'building.isUpgrading',
   'unknownDataHints',
   'idleRisks',
   'skippedLowPriority',
@@ -67,9 +72,16 @@ includes('<span class="nlh-version">v0.7.5</span>', 'panel version should be v0.
   'Alle Dumps kopieren',
   'dumpElements(selector, limit = 200)',
   'advisor: getDomDumpAdvisor()',
+  '(\\d{1,2})\\s*\\/\\s*(\\d{1,2})(?!\\d)',
   'domDumpPages',
   'data-dump-current',
   'data-dump-all',
+  'top: 14px;',
+  'bottom: auto;',
+  'height: 84vh;',
+  'order: -1;',
+  'Energie frei',
+  'Silicates',
   'Aktuell wichtig',
   'Compact Dashboard',
   'Compact',
@@ -108,7 +120,8 @@ includes('<span class="nlh-version">v0.7.5</span>', 'panel version should be v0.
   "name === 'storage complex'",
   "name === 'construction yard'",
   'aff.waitHours <= 1',
-  'aff.waitHours > 6'
+  'aff.waitHours > 6',
+  'score -= 900'
 ].forEach(text => includes(text, `Expected scoring rule: ${text}`));
 
 assert(!/\bfetch\s*\(/.test(source), 'script must not call fetch()');
@@ -122,4 +135,4 @@ includes('function renderRailStatus(resources, warningList)', 'collapsed rail sh
 includes('class="nlh-rail-status"', 'collapsed rail should have a visible status container');
 includes('⚠', 'collapsed rail should show an alert marker when important warnings exist');
 
-console.log('v0.7.5 planner source checks passed');
+console.log('v0.7.6 planner source checks passed');

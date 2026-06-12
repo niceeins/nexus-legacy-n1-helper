@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.6
+
+- Fixed fleet slot parsing when Nexus renders `1 / 3active` without spacing.
+- Detect active building upgrades and stop recommending buildings that are already running.
+- Tightened research prerequisite parsing to avoid combined container prerequisite names.
+- Moved the collapsed side rail to the top, made it full panel height, and expanded rail status labels.
+
 ## 0.7.5
 
 - Increased DOM dump selector limits so building and research pages export all visible cards.

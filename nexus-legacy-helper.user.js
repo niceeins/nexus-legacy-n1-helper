@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nexus Legacy Helper
 // @namespace    https://niceeins.local/
-// @version      0.7.5
+// @version      0.7.6
 // @description  Passive guide-based helper for Nexus Legacy: resources, build/research hints, affordability, wait times, research/fleet cache. No automation.
 // @match        https://*.nexuslegacy.space/*
 // @match        https://nexuslegacy.space/*
@@ -173,7 +173,7 @@
   function captureDomDump() {
     const key = location.pathname + location.search;
     const dump = {
-      version: '0.7.5',
+      version: '0.7.6',
       capturedAt: new Date().toISOString(),
       path: key,
       title: document.title,
@@ -203,7 +203,7 @@
 
   function getDomDumpPayload() {
     return {
-      version: '0.7.5',
+      version: '0.7.6',
       exportedAt: new Date().toISOString(),
       pages: getAllDomDumps()
     };
@@ -329,7 +329,7 @@
   }
 
   function parseSmallFraction(text) {
-    const matches = [...String(text || '').matchAll(/\b(\d{1,2})\s*\/\s*(\d{1,2})\b/g)];
+    const matches = [...String(text || '').matchAll(/(?:^|[^\d])(\d{1,2})\s*\/\s*(\d{1,2})(?!\d)/g)];
 
     for (const match of matches) {
       const active = parseInt(match[1], 10);
@@ -430,7 +430,7 @@
   }
 
   function parsePrereqs(card) {
-    return [...card.querySelectorAll('.prereq,.prerequisite,[class*="prereq"]')]
+    return [...card.querySelectorAll('.prereq,.prerequisite')]
       .map(node => {
         const rawText = node.textContent || '';
         const text = rawText
@@ -534,6 +534,10 @@
     const buttonText = [...card.querySelectorAll('button')]
       .map(button => button.textContent.trim())
       .join(' | ');
+    const isUpgrading =
+      card.classList.contains('upgrading') ||
+      !!card.querySelector('.building-upgrading,.cancel-btn') ||
+      /\bUpgrading\b/i.test(card.textContent || '');
 
     return {
       kind: 'building',
@@ -543,7 +547,8 @@
       costs: parseCosts(card, '.building-costs'),
       timeText: card.querySelector('.build-time')?.textContent?.trim() || null,
       buttonText,
-      isStartable: /Upgrade|Build/i.test(buttonText) && !/missing|disabled|locked|queue|insufficient/i.test(buttonText),
+      isUpgrading,
+      isStartable: !isUpgrading && /Upgrade|Build/i.test(buttonText) && !/missing|disabled|locked|queue|insufficient/i.test(buttonText),
       isBlocked: /missing|disabled|locked|queue|insufficient/i.test(buttonText),
       fromCache: false,
       source: 'buildings'
@@ -1199,7 +1204,7 @@
     const domDumpPages = Object.keys(getAllDomDumps()).sort();
 
     return {
-      version: '0.7.5',
+      version: '0.7.6',
       path: location.pathname + location.search,
       cachedBranches,
       domDumpPages,
@@ -1344,7 +1349,9 @@
 
         let actionState = 'unbekannt';
 
-        if (item.isBlocked) {
+        if (item.isUpgrading) {
+          actionState = 'läuft';
+        } else if (item.isBlocked) {
           actionState = 'blockiert';
         } else if (aff.affordable === true && item.isStartable) {
           actionState = 'jetzt möglich';
@@ -1361,6 +1368,7 @@
         if (aff.affordable === true) score += 18;
         if (aff.affordable === false && aff.waitHours <= 1) score += 10;
         if (aff.affordable === false && aff.waitHours > 6) score -= 15;
+        if (item.isUpgrading) score -= 900;
         if (item.isBlocked) score -= 28;
 
         return {
@@ -1441,7 +1449,9 @@
         const aff = affordability(building, resources);
         let actionState = 'unbekannt';
 
-        if (building.isBlocked) {
+        if (building.isUpgrading) {
+          actionState = 'läuft';
+        } else if (building.isBlocked) {
           actionState = 'blockiert';
         } else if (aff.affordable === true && building.isStartable) {
           actionState = 'jetzt möglich';
@@ -1547,6 +1557,7 @@
     if (aff.affordable === false && aff.waitHours <= 1) score += 35;
     if (aff.affordable === false && aff.waitHours > 6) score -= 120;
     if (building.isStartable) score += 35;
+    if (building.isUpgrading) score -= 900;
     if (building.isBlocked) score -= 90;
     if (building.fromCache) score -= 8;
 
@@ -1713,7 +1724,7 @@
       <div class="nlh-header">
         <div class="nlh-title">
           <strong>Nexus Helper</strong>
-          <span class="nlh-version">v0.7.5</span>
+          <span class="nlh-version">v0.7.6</span>
         </div>
         <div class="nlh-rail-status"></div>
         <div class="nlh-actions">
@@ -1748,10 +1759,12 @@
       }
 
       #${PANEL_ID}.collapsed {
+        top: 14px;
+        bottom: auto;
         right: -388px;
         width: 430px;
-        height: min(84vh, 520px);
-        max-height: min(84vh, 520px);
+        height: 84vh;
+        max-height: 84vh;
         overflow: visible;
         border-radius: 12px 0 0 12px;
       }
@@ -1834,6 +1847,7 @@
       }
 
       #${PANEL_ID}.collapsed .nlh-actions {
+        order: -1;
         writing-mode: horizontal-tb;
         flex-direction: column;
         align-items: center;
@@ -2642,10 +2656,10 @@
     const bits = [];
 
     if (hasDanger || hasWarning) bits.push(hasDanger ? '⚠' : '!');
-    if (energy) bits.push(`E ${fmtNum(energy.free)}`);
-    if (ore?.amount != null) bits.push(`O ${fmtNum(ore.amount)}`);
-    if (silicates?.amount != null) bits.push(`S ${fmtNum(silicates.amount)}`);
-    if (hydrogen?.amount != null) bits.push(`H ${fmtNum(hydrogen.amount)}`);
+    if (energy) bits.push(`Energie frei ${fmtNum(energy.free)}`);
+    if (ore?.amount != null) bits.push(`Ore ${fmtNum(ore.amount)}`);
+    if (silicates?.amount != null) bits.push(`Silicates ${fmtNum(silicates.amount)}`);
+    if (hydrogen?.amount != null) bits.push(`Hydrogen ${fmtNum(hydrogen.amount)}`);
 
     return bits.length ? bits.join(' · ') : 'Status';
   }
