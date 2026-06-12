@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.2
+
+- Added drag-and-drop ordering for detail sections
+- Saved custom detail section order in local settings
+- Added eye hover button to make the overlay transparent
+
 ## 0.7.1
 
 - Compact UI cleanup

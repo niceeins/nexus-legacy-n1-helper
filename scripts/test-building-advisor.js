@@ -9,8 +9,8 @@ function includes(text, message) {
   assert(source.includes(text), message || `Expected source to include ${text}`);
 }
 
-includes('@version      0.7.1', 'userscript header version should be 0.7.1');
-includes('<span class="nlh-version">v0.7.1</span>', 'panel version should be v0.7.1');
+includes('@version      0.7.2', 'userscript header version should be 0.7.2');
+includes('<span class="nlh-version">v0.7.2</span>', 'panel version should be v0.7.2');
 
 [
   'function getBuildingAdvisor(resources, buildings, researchItems, fleetState)',
@@ -24,6 +24,10 @@ includes('<span class="nlh-version">v0.7.1</span>', 'panel version should be v0.
   'function renderSessionPlan(plan)',
   'function renderDataQuality(dataQuality)',
   'function renderCollapsibleSection(id, title, html, options = {})',
+  'function normalizeSectionOrder(order)',
+  'function renderOrderedDetailSections(sectionMap)',
+  'function setupSectionDragAndDrop(panel)',
+  'function setupPeekHover(panel)',
   'function renderTopSummary(nextActionPlanner, buildingAdvisor, goalState, warningList, cacheHint)',
   'function renderCompactDashboard(currentStatus, fleet, dataQuality, resources)',
   'function renderCompactResources(resources)',
@@ -64,6 +68,15 @@ includes('<span class="nlh-version">v0.7.1</span>', 'panel version should be v0.
   "renderCollapsibleSection('data-debug'",
   'settings.compactMode',
   'settings.sectionOpen',
+  'settings.sectionOrder',
+  'draggable="true"',
+  'data-section-drag',
+  "addEventListener('dragstart'",
+  "addEventListener('drop'",
+  'nlh-peek',
+  'peek-transparent',
+  '&#128065;',
+  "addEventListener('mouseenter'",
   'Geb',
   'N',
   'Reihenfolge',
@@ -92,4 +105,4 @@ assert(!/\bXMLHttpRequest\b/.test(source), 'script must not use XMLHttpRequest')
 assert(!/\.click\s*\(/.test(source), 'script must not perform DOM clicks');
 assert(!/\bPOST\b|\bPUT\b|\bDELETE\b/.test(source), 'script must not contain write request verbs');
 
-console.log('v0.7.1 planner source checks passed');
+console.log('v0.7.2 planner source checks passed');

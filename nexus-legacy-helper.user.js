@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nexus Legacy Helper
 // @namespace    https://niceeins.local/
-// @version      0.7.1
+// @version      0.7.2
 // @description  Passive guide-based helper for Nexus Legacy: resources, build/research hints, affordability, wait times, research/fleet cache. No automation.
 // @match        https://*.nexuslegacy.space/*
 // @match        https://nexuslegacy.space/*
@@ -41,6 +41,17 @@
     'Bio Complex'
   ];
 
+  const DETAIL_SECTION_ORDER = [
+    'research-plan',
+    'building-order',
+    'session-plan',
+    'checklist',
+    'resources',
+    'data-debug',
+    'priorities',
+    'guide-path'
+  ];
+
   const LOW_EARLY_PRIORITY = new Set([
     'storage complex',
     'construction yard',
@@ -56,6 +67,7 @@
     return {
       collapsed: !!raw.collapsed,
       compactMode: !!raw.compactMode,
+      sectionOrder: normalizeSectionOrder(raw.sectionOrder),
       sectionOpen: {
         ...{
           'research-plan': true,
@@ -70,6 +82,24 @@
         ...(raw.sectionOpen || {})
       }
     };
+  }
+
+  function normalizeSectionOrder(order) {
+    const seen = new Set();
+    const normalized = [];
+
+    for (const id of Array.isArray(order) ? order : []) {
+      if (DETAIL_SECTION_ORDER.includes(id) && !seen.has(id)) {
+        seen.add(id);
+        normalized.push(id);
+      }
+    }
+
+    for (const id of DETAIL_SECTION_ORDER) {
+      if (!seen.has(id)) normalized.push(id);
+    }
+
+    return normalized;
   }
 
   function loadJson(key, fallback) {
@@ -1087,7 +1117,7 @@
     const cachedBranches = getCachedBranches();
 
     return {
-      version: '0.7.1',
+      version: '0.7.2',
       path: location.pathname + location.search,
       cachedBranches,
       buildingsCached: Array.isArray(snapshots.buildings) && snapshots.buildings.length > 0,
@@ -1600,10 +1630,11 @@
       <div class="nlh-header">
         <div>
           <strong>Nexus Helper</strong>
-          <span class="nlh-version">v0.7.1</span>
+          <span class="nlh-version">v0.7.2</span>
         </div>
         <div class="nlh-actions">
           <button class="nlh-toggle">−</button>
+          <button class="nlh-peek" title="Overlay beim Hover transparent">&#128065;</button>
           <button class="nlh-compact-toggle">Compact</button>
           <button class="nlh-clear-cache">Cache</button>
           <button class="nlh-refresh">↻</button>
@@ -1629,10 +1660,15 @@
         box-shadow: 0 18px 45px rgba(0,0,0,.48);
         font-family: system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
         font-size: 13px;
+        transition: opacity .12s ease;
       }
 
       #${PANEL_ID}.collapsed {
         width: 290px;
+      }
+
+      #${PANEL_ID}.peek-transparent {
+        opacity: .22;
       }
 
       #${PANEL_ID}.collapsed .nlh-body {
@@ -1869,7 +1905,7 @@
       #${PANEL_ID} .nlh-section-toggle {
         width: 100%;
         display: grid;
-        grid-template-columns: auto 1fr auto;
+        grid-template-columns: auto auto 1fr auto;
         gap: 7px;
         align-items: center;
         text-align: left;
@@ -1883,6 +1919,18 @@
       #${PANEL_ID} .nlh-section-chevron {
         color: #93c5fd;
         font-size: 11px;
+      }
+
+      #${PANEL_ID} .nlh-section-drag {
+        color: #64748b;
+        cursor: grab;
+        font-size: 12px;
+        line-height: 1;
+        user-select: none;
+      }
+
+      #${PANEL_ID} .nlh-section-drag:active {
+        cursor: grabbing;
       }
 
       #${PANEL_ID} .nlh-section-name {
@@ -1908,6 +1956,15 @@
 
       #${PANEL_ID} .nlh-collapsible.danger .nlh-section-toggle {
         border-color: rgba(248,113,113,.32);
+      }
+
+      #${PANEL_ID} .nlh-collapsible.dragging {
+        opacity: .55;
+      }
+
+      #${PANEL_ID} .nlh-collapsible.drag-over .nlh-section-toggle {
+        border-color: rgba(96,165,250,.62);
+        background: rgba(30,64,175,.24);
       }
 
       #${PANEL_ID} .nlh-resource-table {
@@ -1981,6 +2038,7 @@
       render();
     });
 
+    setupPeekHover(panel);
     applyCollapsed();
     applyCompactMode();
   }
@@ -2067,6 +2125,20 @@
     }
   }
 
+  function setupPeekHover(panel) {
+    const button = panel.querySelector('.nlh-peek');
+
+    if (!button) return;
+
+    button.addEventListener('mouseenter', () => {
+      panel.classList.add('peek-transparent');
+    });
+
+    button.addEventListener('mouseleave', () => {
+      panel.classList.remove('peek-transparent');
+    });
+  }
+
   function setSectionOpen(sectionId, open) {
     settings.sectionOpen = settings.sectionOpen || {};
     settings.sectionOpen[sectionId] = !!open;
@@ -2091,8 +2163,9 @@
     const badge = options.badge ? `<span class="nlh-section-badge">${options.badge}</span>` : '<span></span>';
 
     return `
-      <div class="${classes}" data-section="${esc(id)}">
+      <div class="${classes}" data-section="${esc(id)}" draggable="true">
         <button class="nlh-section-toggle" type="button" data-section-toggle="${esc(id)}">
+          <span class="nlh-section-drag" data-section-drag title="Section verschieben">::</span>
           <span class="nlh-section-chevron">${open ? 'v' : '>'}</span>
           <span class="nlh-section-name">${esc(title)}</span>
           ${badge}
@@ -2100,6 +2173,69 @@
         <div class="nlh-section-body">${html}</div>
       </div>
     `;
+  }
+
+  function renderOrderedDetailSections(sectionMap) {
+    settings.sectionOrder = normalizeSectionOrder(settings.sectionOrder);
+
+    return settings.sectionOrder
+      .map(id => sectionMap[id])
+      .filter(Boolean)
+      .join('');
+  }
+
+  function setupSectionDragAndDrop(panel) {
+    let draggedId = null;
+
+    panel.querySelectorAll('.nlh-collapsible[data-section]').forEach(section => {
+      section.addEventListener('dragstart', event => {
+        draggedId = section.getAttribute('data-section');
+        section.classList.add('dragging');
+
+        if (event.dataTransfer) {
+          event.dataTransfer.effectAllowed = 'move';
+          event.dataTransfer.setData('text/plain', draggedId || '');
+        }
+      });
+
+      section.addEventListener('dragover', event => {
+        event.preventDefault();
+        if (section.getAttribute('data-section') !== draggedId) {
+          section.classList.add('drag-over');
+        }
+      });
+
+      section.addEventListener('dragleave', () => {
+        section.classList.remove('drag-over');
+      });
+
+      section.addEventListener('drop', event => {
+        event.preventDefault();
+
+        const targetId = section.getAttribute('data-section');
+        const sourceId = draggedId || event.dataTransfer?.getData('text/plain');
+
+        panel.querySelectorAll('.nlh-collapsible').forEach(item => item.classList.remove('drag-over', 'dragging'));
+
+        if (!sourceId || !targetId || sourceId === targetId) return;
+
+        const order = normalizeSectionOrder(settings.sectionOrder).filter(id => id !== sourceId);
+        const targetIndex = order.indexOf(targetId);
+        const rect = section.getBoundingClientRect();
+        const dropAfter = event.clientY > rect.top + rect.height / 2;
+        const insertAt = targetIndex + (dropAfter ? 1 : 0);
+
+        order.splice(insertAt, 0, sourceId);
+        settings.sectionOrder = normalizeSectionOrder(order);
+        saveJson(SETTINGS_KEY, settings);
+        render();
+      });
+
+      section.addEventListener('dragend', () => {
+        draggedId = null;
+        panel.querySelectorAll('.nlh-collapsible').forEach(item => item.classList.remove('drag-over', 'dragging'));
+      });
+    });
   }
 
   function renderGoal(goalState, cacheHint) {
@@ -2753,6 +2889,46 @@
       </div>
     `;
 
+    const detailSections = {
+      'research-plan': renderCollapsibleSection('research-plan', 'Research Plan', renderResearchPlan(researchPlan), {
+        defaultOpen: true,
+        badge: `<span class="nlh-pill ${researchPlan.startable ? 'good' : researchPlan.blocked ? 'danger' : 'warn'}">${esc(researchPlan.progress.done)}/${esc(researchPlan.progress.total)}</span>`
+      }),
+      'building-order': renderCollapsibleSection('building-order', 'GebÃ¤ude-Reihenfolge', renderBuildingOrder(buildingAdvisor), {
+        defaultOpen: true,
+        badge: buildingAdvisor.recommended ? `<span class="nlh-pill ${buildingAdvisor.recommended.actionState === 'jetzt mÃ¶glich' ? 'good' : 'warn'}">${esc(buildingAdvisor.recommended.actionState)}</span>` : '<span class="nlh-pill warn">fehlt</span>'
+      }),
+      'session-plan': renderCollapsibleSection('session-plan', 'Session Plan', renderSessionPlan(sessionPlan), {
+        defaultOpen: false,
+        badge: `<span class="nlh-pill">${sessionPlan.now.length}</span>`
+      }),
+      checklist: renderCollapsibleSection('checklist', 'Guide-Checkliste', renderChecklist(checklist), {
+        defaultOpen: false,
+        badge: `<span class="nlh-pill">${checklist.filter(item => item.tone === 'good').length}/${checklist.length}</span>`
+      }),
+      resources: renderCollapsibleSection('resources', 'Ressourcen', renderCompactResources(resources), {
+        defaultOpen: false,
+        muted: true
+      }),
+      'data-debug': renderCollapsibleSection('data-debug', 'Datenstatus / Debug', renderDataQuality(dataQuality), {
+        defaultOpen: false,
+        muted: true
+      }),
+      priorities: renderCollapsibleSection('priorities', 'Top-PrioritÃ¤ten', renderTopPriorities(actionList, immediate, waiting, warningList), {
+        defaultOpen: false,
+        badge: `<span class="nlh-pill">${actionList.length}</span>`,
+        danger: warningList.some(warning => warning.type === 'danger')
+      }),
+      'guide-path': renderCollapsibleSection('guide-path', 'Guide-Pfad', `
+        <div class="nlh-card">
+          ${GUIDE_TECH_ORDER.map(item => `<span class="nlh-pill">${esc(item)}</span>`).join('')}
+        </div>
+      `, {
+        defaultOpen: false,
+        muted: true
+      })
+    };
+
     panel.querySelector('.nlh-body').innerHTML = `
       ${renderOnboarding(dataQuality)}
       ${renderTopSummary(nextActionPlanner, buildingAdvisor, goalState, warningList, cacheHint)}
@@ -2803,8 +2979,24 @@
       </div>
     `;
 
+    panel.querySelector('.nlh-body').innerHTML = `
+      ${renderOnboarding(dataQuality)}
+      ${renderTopSummary(nextActionPlanner, buildingAdvisor, goalState, warningList, cacheHint)}
+      ${renderCompactDashboard(currentStatus, fleet, dataQuality, resources)}
+
+      <div class="nlh-details">
+        ${renderOrderedDetailSections(detailSections)}
+      </div>
+
+      <div class="nlh-footer-note">
+        Nur Overlay/Rechner. Keine Klicks, keine Requests, keine Automatisierung.
+      </div>
+    `;
+
     panel.querySelectorAll('[data-section-toggle]').forEach(button => {
-      button.addEventListener('click', () => {
+      button.addEventListener('click', event => {
+        if (event.target.closest('[data-section-drag]')) return;
+
         const id = button.getAttribute('data-section-toggle');
         const section = button.closest('.nlh-collapsible');
 
@@ -2818,6 +3010,7 @@
       });
     });
 
+    setupSectionDragAndDrop(panel);
     applyCompactMode();
     panel.querySelector('.nlh-debug-copy')?.addEventListener('click', copyDebugData);
   }
