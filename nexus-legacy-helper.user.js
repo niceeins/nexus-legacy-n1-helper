@@ -1,0 +1,1285 @@
+// ==UserScript==
+// @name         Nexus Legacy Helper
+// @namespace    https://niceeins.local/
+// @version      0.4.1
+// @description  Passive guide-based helper for Nexus Legacy: resources, build/research hints, affordability, wait times, research/fleet cache. No automation.
+// @match        https://*.nexuslegacy.space/*
+// @match        https://nexuslegacy.space/*
+// @run-at       document-idle
+// @grant        none
+// @updateURL    https://raw.githubusercontent.com/niceeins/nexus-legacy-n1-helper/main/nexus-legacy-helper.user.js
+// @downloadURL  https://raw.githubusercontent.com/niceeins/nexus-legacy-n1-helper/main/nexus-legacy-helper.user.js
+// ==/UserScript==
+
+(() => {
+  'use strict';
+
+  const PANEL_ID = 'nlh-panel';
+  const SETTINGS_KEY = 'nexusLegacyHelper.v041.settings';
+  const SNAPSHOT_KEY = 'nexusLegacyHelper.v041.snapshots';
+  const GUIDE = 'Determinator Beginner Guide';
+
+  const GUIDE_TECH_ORDER = [
+    'Basic Sensors',
+    'Probe Technology',
+    'Structural Alloys',
+    'Orbital Mechanics',
+    'Anomaly Scanning',
+    'Fleet Coordination',
+    'Navigation Computer',
+    'Workforce Management'
+  ];
+
+  const GUIDE_BUILD_ORDER = [
+    'Research Lab',
+    'Ore Mine',
+    'Silicate Mine',
+    'Solar Plant',
+    'Hydrogen Processor',
+    'Alloy Foundry',
+    'Residential Complex',
+    'Bio Complex'
+  ];
+
+  const LOW_EARLY_PRIORITY = new Set([
+    'storage complex',
+    'construction yard',
+    'expanded warehousing',
+    'basic armor plating',
+    'laser weapons',
+    'fighter doctrine'
+  ]);
+
+  const settings = loadJson(SETTINGS_KEY, { collapsed: false });
+
+  function loadJson(key, fallback) {
+    try {
+      return JSON.parse(localStorage.getItem(key)) || fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  function saveJson(key, value) {
+    localStorage.setItem(key, JSON.stringify(value));
+  }
+
+  function getSnapshots() {
+    return loadJson(SNAPSHOT_KEY, {
+      researchByBranch: {},
+      buildings: [],
+      fleet: null,
+      updatedAt: null
+    });
+  }
+
+  function saveSnapshots(snapshots) {
+    snapshots.updatedAt = Date.now();
+    saveJson(SNAPSHOT_KEY, snapshots);
+  }
+
+  function esc(value) {
+    return String(value ?? '')
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#039;');
+  }
+
+  function norm(value) {
+    return String(value || '')
+      .trim()
+      .replace(/\s+/g, ' ')
+      .toLowerCase();
+  }
+
+  function cleanName(value) {
+    return String(value || '')
+      .replace(/Lv\.?\s*\d+.*$/i, '')
+      .replace(/Level\s*\d+.*$/i, '')
+      .replace(/→.*$/i, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function parseNum(value) {
+    if (value == null) return null;
+
+    let raw = String(value)
+      .trim()
+      .replace(/\s/g, '')
+      .replace('+', '')
+      .replace('/h', '');
+
+    if (!raw) return null;
+
+    if (/k$/i.test(raw)) {
+      const n = parseFloat(raw.replace(/k$/i, '').replace(',', '.'));
+      return Number.isFinite(n) ? n * 1000 : null;
+    }
+
+    if (/^\d{1,3}(\.\d{3})+$/.test(raw)) {
+      raw = raw.replaceAll('.', '');
+    } else {
+      raw = raw.replace(',', '.');
+    }
+
+    const n = parseFloat(raw);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function fmtNum(value) {
+    if (!Number.isFinite(value)) return '?';
+
+    if (value >= 1000000) {
+      return `${(value / 1000000).toFixed(2).replace(/\.00$/, '')}M`;
+    }
+
+    if (value >= 1000) {
+      return `${(value / 1000).toFixed(value >= 10000 ? 1 : 2).replace(/\.00$/, '')}K`;
+    }
+
+    return `${Math.ceil(value)}`;
+  }
+
+  function fmtTime(hours) {
+    if (!Number.isFinite(hours)) return 'unbekannt';
+    if (hours <= 0) return 'jetzt';
+
+    const mins = Math.ceil(hours * 60);
+
+    if (mins < 60) return `${mins}m`;
+
+    const h = Math.floor(mins / 60);
+    const m = mins % 60;
+
+    if (h < 24) {
+      return m ? `${h}h ${m}m` : `${h}h`;
+    }
+
+    const d = Math.floor(h / 24);
+    const rh = h % 24;
+
+    return rh ? `${d}d ${rh}h` : `${d}d`;
+  }
+
+  function mergeByName(items) {
+    const map = new Map();
+
+    for (const item of items) {
+      if (!item?.name) continue;
+
+      const key = `${item.kind}:${norm(item.name)}`;
+      const old = map.get(key);
+
+      if (!old) {
+        map.set(key, item);
+        continue;
+      }
+
+      const oldWeight =
+        (old.fromCache ? 0 : 20) +
+        (old.isStartable ? 10 : 0) -
+        (old.isBlocked ? 4 : 0);
+
+      const newWeight =
+        (item.fromCache ? 0 : 20) +
+        (item.isStartable ? 10 : 0) -
+        (item.isBlocked ? 4 : 0);
+
+      if (newWeight >= oldWeight) {
+        map.set(key, { ...old, ...item });
+      }
+    }
+
+    return [...map.values()];
+  }
+
+  function parseSmallFraction(text) {
+    const matches = [...String(text || '').matchAll(/\b(\d{1,2})\s*\/\s*(\d{1,2})\b/g)];
+
+    for (const match of matches) {
+      const active = parseInt(match[1], 10);
+      const max = parseInt(match[2], 10);
+
+      if (max > 0 && max <= 20 && active >= 0 && active <= max) {
+        return { active, max };
+      }
+    }
+
+    return null;
+  }
+
+  function getResources() {
+    return [...document.querySelectorAll('.resource-bar .resource-item')]
+      .map(parseResourceItem)
+      .filter(r => r.name && r.name !== 'Unknown');
+  }
+
+  function parseResourceItem(el) {
+    const icon = el.querySelector('img');
+    const title = el.getAttribute('title') || '';
+    const first = title.split('\n')[0] || '';
+
+    const capacityMatch = first.match(/:\s*([0-9.,Kk]+)\s*\/\s*([0-9.,Kk]+)/);
+    const energyMatch = first.match(/Energy:\s*([0-9.,Kk]+)\s+used\s*\/\s*([0-9.,Kk]+)\s+produced/i);
+    const storageMatch = title.match(/Storage full in:\s*([^\n]+)/i);
+    const netMatch = title.match(/Net:\s*([+-]?[0-9.,Kk]+\/h)/i);
+
+    const rate = el.querySelector('.resource-rate')?.textContent?.trim() || '';
+
+    return {
+      name: icon?.alt?.trim() || 'Unknown',
+      value: el.querySelector('.resource-value')?.textContent?.trim() || '',
+      rate,
+      amount: capacityMatch ? parseNum(capacityMatch[1]) : null,
+      capacity: capacityMatch ? parseNum(capacityMatch[2]) : null,
+      usedEnergy: energyMatch ? parseNum(energyMatch[1]) : null,
+      producedEnergy: energyMatch ? parseNum(energyMatch[2]) : null,
+      storageFullIn: storageMatch ? storageMatch[1].trim() : null,
+      net: netMatch ? netMatch[1].trim() : rate,
+      netNumber: parseNum(netMatch ? netMatch[1] : rate)
+    };
+  }
+
+  function getRes(resources, name) {
+    return resources.find(r => norm(r.name) === norm(name)) || null;
+  }
+
+  function getEnergy(resources) {
+    const e = getRes(resources, 'Energy');
+
+    if (!e || e.usedEnergy == null || e.producedEnergy == null) {
+      return null;
+    }
+
+    return {
+      used: e.usedEnergy,
+      produced: e.producedEnergy,
+      free: e.producedEnergy - e.usedEnergy,
+      ratio: e.producedEnergy > 0 ? e.usedEnergy / e.producedEnergy : 1
+    };
+  }
+
+  function soonFull(text) {
+    if (!text) return false;
+
+    const t = text.toLowerCase();
+
+    if (/\d+\s*m/.test(t) && !/\d+\s*d/.test(t)) {
+      return true;
+    }
+
+    const h = t.match(/(\d+)\s*h/);
+
+    return !!(h && !/\d+\s*d/.test(t) && parseInt(h[1], 10) <= 8);
+  }
+
+  function parseCosts(card, selector) {
+    const root = card.querySelector(selector);
+
+    if (!root) return [];
+
+    return [...root.querySelectorAll('span[title]')]
+      .map(node => {
+        const title = node.getAttribute('title') || '';
+        const match = title.match(/^([^:]+):\s*([0-9.,Kk]+)/);
+
+        if (!match) return null;
+
+        return {
+          name: match[1].trim(),
+          amount: parseNum(match[2]),
+          text: node.textContent.trim()
+        };
+      })
+      .filter(Boolean);
+  }
+
+  function affordability(item, resources) {
+    if (!item.costs?.length) {
+      return {
+        known: false,
+        affordable: null,
+        missing: [],
+        waitHours: null,
+        waitText: 'Kosten nicht sichtbar'
+      };
+    }
+
+    const missing = [];
+    let wait = 0;
+
+    for (const cost of item.costs) {
+      const res = getRes(resources, cost.name);
+
+      if (res?.amount == null || cost.amount == null) continue;
+
+      if (res.amount < cost.amount) {
+        const deficit = cost.amount - res.amount;
+        const waitHours = res.netNumber > 0 ? deficit / res.netNumber : Infinity;
+
+        wait = Math.max(wait, waitHours);
+
+        missing.push({
+          name: cost.name,
+          deficit,
+          waitHours
+        });
+      }
+    }
+
+    return {
+      known: true,
+      affordable: missing.length === 0,
+      missing,
+      waitHours: missing.length ? wait : 0,
+      waitText: missing.length ? fmtTime(wait) : 'jetzt'
+    };
+  }
+
+  function parseOverviewBuilding(card) {
+    const name = card.querySelector('.ov-bld-name')?.childNodes?.[0]?.textContent?.trim() || '';
+    const levelText = card.querySelector('.lvl')?.textContent || '';
+
+    return {
+      kind: 'building',
+      name: cleanName(name),
+      level: parseInt(levelText.replace(/^Lv/i, ''), 10) || 0,
+      nextLevel: null,
+      costs: [],
+      timeText: null,
+      isStartable: false,
+      isBlocked: false,
+      fromCache: false,
+      source: 'overview'
+    };
+  }
+
+  function parseBuilding(card) {
+    const name =
+      card.querySelector('.building-name')?.childNodes?.[0]?.textContent?.trim() ||
+      card.querySelector('.building-name')?.textContent?.trim() ||
+      card.querySelector('h3,h4')?.textContent?.trim() ||
+      '';
+
+    const levelText = card.querySelector('.building-level')?.textContent || '';
+    const levelMatch = levelText.match(/\bLv\.?\s*(\d{1,2})\b/i);
+    const nextMatch = levelText.match(/→\s*(\d{1,2})/i);
+
+    const buttonText = [...card.querySelectorAll('button')]
+      .map(button => button.textContent.trim())
+      .join(' | ');
+
+    return {
+      kind: 'building',
+      name: cleanName(name),
+      level: levelMatch ? parseInt(levelMatch[1], 10) : 0,
+      nextLevel: nextMatch ? parseInt(nextMatch[1], 10) : null,
+      costs: parseCosts(card, '.building-costs'),
+      timeText: card.querySelector('.build-time')?.textContent?.trim() || null,
+      buttonText,
+      isStartable: /Upgrade|Build/i.test(buttonText) && !/missing|disabled|locked|queue|insufficient/i.test(buttonText),
+      isBlocked: /missing|disabled|locked|queue|insufficient/i.test(buttonText),
+      fromCache: false,
+      source: 'buildings'
+    };
+  }
+
+  function getVisibleBuildings() {
+    const cards = [...document.querySelectorAll('.building-card')];
+
+    if (cards.length) {
+      return cards.map(parseBuilding).filter(b => b.name);
+    }
+
+    return [...document.querySelectorAll('.ov-bld-card')]
+      .map(parseOverviewBuilding)
+      .filter(b => b.name);
+  }
+
+  function getBuildings() {
+    const current = getVisibleBuildings();
+    const snapshots = getSnapshots();
+
+    if (current.length) {
+      snapshots.buildings = current.map(item => ({ ...item, fromCache: true }));
+      saveSnapshots(snapshots);
+    }
+
+    return mergeByName([
+      ...(snapshots.buildings || []),
+      ...current
+    ]);
+  }
+
+  function buildingLevel(buildings, name) {
+    return buildings.find(b => norm(b.name) === norm(name))?.level || 0;
+  }
+
+  function labLevel(buildings) {
+    const hero = document.querySelector('.res-hero-sub')?.textContent || '';
+    const heroMatch = hero.match(/\bLab\s+Lv\.?\s*(\d{1,2})\b/i);
+
+    if (heroMatch) {
+      return parseInt(heroMatch[1], 10);
+    }
+
+    const labCard = [...document.querySelectorAll('.building-card')]
+      .find(card => /^Research Lab\b/i.test(card.querySelector('.building-name')?.textContent?.trim() || ''));
+
+    const labCardMatch = labCard?.querySelector('.building-level')?.textContent?.match(/\bLv\.?\s*(\d{1,2})\b/i);
+
+    if (labCardMatch) {
+      return parseInt(labCardMatch[1], 10);
+    }
+
+    const overviewLab = [...document.querySelectorAll('.ov-bld-card')]
+      .find(card => /Research Lab/i.test(card.textContent || ''));
+
+    const overviewMatch = overviewLab?.querySelector('.lvl')?.textContent?.match(/\bLv\.?\s*(\d{1,2})\b/i);
+
+    if (overviewMatch) {
+      return parseInt(overviewMatch[1], 10);
+    }
+
+    const parsed = buildingLevel(buildings, 'Research Lab');
+
+    return parsed && parsed <= 99 ? parsed : null;
+  }
+
+  function currentResearchBranch() {
+    const active = document.querySelector('.res-branch-tab.active .res-branch-label')?.textContent?.trim();
+
+    if (active) return active.toLowerCase();
+
+    return new URLSearchParams(location.search).get('branch') || 'unknown';
+  }
+
+  function parseResearch(card) {
+    const text = card.textContent || '';
+
+    const name =
+      card.querySelector('.research-name-link')?.textContent?.trim() ||
+      card.querySelector('.research-name')?.textContent?.trim() ||
+      card.querySelector('h3,h4,a')?.textContent?.trim() ||
+      '';
+
+    const levelMatch = text.match(/Lv\.?\s*(\d{1,2})\s*\/\s*(\d{1,2})/i);
+    const labMatch = text.match(/\bLab\s+Lv\.?\s*(\d{1,2})\b/i);
+
+    const buttonText = [...card.querySelectorAll('button')]
+      .map(button => button.textContent.trim())
+      .join(' | ');
+
+    return {
+      kind: 'research',
+      name: cleanName(name),
+      level: levelMatch ? parseInt(levelMatch[1], 10) : 0,
+      maxLevel: levelMatch ? parseInt(levelMatch[2], 10) : null,
+      labRequired: labMatch ? parseInt(labMatch[1], 10) : null,
+      costs: parseCosts(card, '.research-costs'),
+      timeText: card.querySelector('.research-time')?.textContent?.trim() || null,
+      href: card.querySelector('.research-name-link')?.getAttribute('href') || '',
+      buttonText,
+      isStartable: /Start Research|Level Up/i.test(buttonText) && !/Prerequisites missing|Missing|Locked/i.test(buttonText),
+      isPlanned: /Added/i.test(buttonText),
+      isBlocked: /Prerequisites missing|Missing|Locked/i.test(buttonText) || card.classList.contains('prereq-missing'),
+      fromCache: false,
+      source: 'research'
+    };
+  }
+
+  function getResearch() {
+    const current = [...document.querySelectorAll('.research-card')]
+      .map(parseResearch)
+      .filter(r => r.name);
+
+    const snapshots = getSnapshots();
+
+    if (current.length) {
+      snapshots.researchByBranch[currentResearchBranch()] = current.map(item => ({
+        ...item,
+        fromCache: true
+      }));
+
+      saveSnapshots(snapshots);
+    }
+
+    return mergeByName([
+      ...Object.values(snapshots.researchByBranch || {}).flat(),
+      ...current
+    ]);
+  }
+
+  function fleetState() {
+    const path = location.pathname;
+    const text = document.body.textContent || '';
+
+    let active = null;
+    let max = null;
+
+    const title = document.querySelector('.fleet-missions-card h3')?.textContent || '';
+    const titleMatch = title.match(/Fleet Missions\s*\((\d{1,2})\s*\/\s*(\d{1,2})\)/i);
+
+    if (titleMatch) {
+      active = parseInt(titleMatch[1], 10);
+      max = parseInt(titleMatch[2], 10);
+    }
+
+    if (active == null) {
+      const fleetLink = [...document.querySelectorAll('.sidebar-link')]
+        .find(link => link.querySelector('.sidebar-link-label')?.textContent?.trim() === 'Fleet');
+
+      const badge = fleetLink?.querySelector('.sidebar-badge')?.textContent?.trim();
+
+      if (badge && /^\d{1,2}$/.test(badge)) {
+        active = parseInt(badge, 10);
+        max = 3;
+      }
+    }
+
+    if (
+      (path.includes('/fleet') || path.includes('/overview') || path.includes('/mining')) &&
+      (active == null || max == null)
+    ) {
+      const fraction = parseSmallFraction(
+        document.querySelector('.fleet-missions-card,.fleet-page,.fleet-section,.missions-list')?.textContent || ''
+      );
+
+      if (fraction) {
+        active = fraction.active;
+        max = fraction.max;
+      }
+    }
+
+    let hasMining =
+      !!document.querySelector('.mission-card.status-mining') ||
+      [...document.querySelectorAll('.ov-mission-card,[class*="mission-card"]')]
+        .some(card => /\bMining\b/i.test(card.textContent || ''));
+
+    if (!hasMining && (path.includes('/fleet') || path.includes('/overview') || path.includes('/mining'))) {
+      hasMining = /Mining Mission|status-mining|⛏ Mining|\bMining\b/i.test(text);
+    }
+
+    let result = {
+      active: Number.isFinite(active) ? active : 0,
+      max: Number.isFinite(max) ? max : null,
+      free: Number.isFinite(active) && Number.isFinite(max) ? Math.max(0, max - active) : null,
+      hasMining,
+      fromCache: false
+    };
+
+    const snapshots = getSnapshots();
+
+    if (path.includes('/fleet') || path.includes('/overview') || path.includes('/mining')) {
+      if (result.max && result.max <= 20 && result.active >= 0 && result.active <= result.max) {
+        snapshots.fleet = {
+          ...result,
+          fromCache: true,
+          cachedAt: Date.now()
+        };
+
+        saveSnapshots(snapshots);
+      }
+    } else if (snapshots.fleet) {
+      result = {
+        ...snapshots.fleet,
+        fromCache: true
+      };
+    }
+
+    return result;
+  }
+
+  function status(buildings) {
+    let queue = null;
+    let slots = null;
+
+    for (const chip of document.querySelectorAll('.bld-stat-chip')) {
+      const text = chip.textContent.replace(/\s+/g, ' ').trim();
+      const match = text.match(/(\d{1,2})\s*\/\s*(\d{1,2})/);
+
+      if (/slots/i.test(text) && match) {
+        slots = `${match[1]}/${match[2]}`;
+      }
+
+      if (/queue/i.test(text) && match) {
+        queue = `${match[1]}/${match[2]}`;
+      }
+    }
+
+    return {
+      queue,
+      slots,
+      lab: labLevel(buildings)
+    };
+  }
+
+  function rank(item, resources, buildings) {
+    const name = norm(item.name);
+
+    let prio = 20;
+    let reason = 'Erkannte Aktion.';
+    let source = 'Seitenzustand';
+
+    const lab = labLevel(buildings);
+    const energy = getEnergy(resources);
+
+    if (item.kind === 'research') {
+      const index = GUIDE_TECH_ORDER.findIndex(tech => norm(tech) === name);
+
+      if (index >= 0) {
+        prio = 120 - index * 6;
+        reason = 'Teil des Guide-Pfads Richtung Anomaly Scanning und Exploration.';
+        source = `${GUIDE}: Research path`;
+      }
+
+      if (name === 'basic sensors') {
+        prio = 140;
+        reason = 'Direkte Voraussetzung für Probe Technology und Anomaly Scanning.';
+        source = `${GUIDE}: Basic Sensors`;
+      }
+
+      if (name === 'probe technology') {
+        prio = 132;
+        reason = 'Hilft beim frühen Scouting.';
+        source = `${GUIDE}: Probe/scouting`;
+      }
+
+      if (name === 'structural alloys') {
+        prio = 128;
+        reason = 'Wichtige frühe Tech Richtung Shipyard/Fleet.';
+        source = `${GUIDE}: Lab Lv1 techs`;
+      }
+
+      if (name === 'orbital mechanics') {
+        prio = 126;
+        reason = 'Zentrale Voraussetzung für Scouts, Freighters und weitere Techs.';
+        source = `${GUIDE}: Lab Lv2 techs`;
+      }
+
+      if (name === 'anomaly scanning') {
+        prio = 138;
+        reason = 'Erste echte Rush-Tech laut Guide.';
+        source = `${GUIDE}: Anomaly rush`;
+      }
+
+      if (name === 'improved mining' && item.level >= 1) {
+        prio = 30;
+        reason = 'Schon Lv1. Income-Techs nicht zu früh hochpushen.';
+        source = `${GUIDE}: income techs`;
+      }
+
+      if (LOW_EARLY_PRIORITY.has(name)) {
+        prio = 15;
+        reason = 'Früh niedrige Priorität.';
+        source = `${GUIDE}: early ignore/later`;
+      }
+
+      if (item.labRequired && lab && item.labRequired > lab) {
+        prio -= 20;
+        reason += ` Benötigt Lab Lv.${item.labRequired}; aktuell Lab Lv.${lab}.`;
+      }
+
+      if (item.isBlocked) prio -= 30;
+      if (item.isStartable) prio += 20;
+      if (item.fromCache) prio -= 2;
+    } else {
+      const index = GUIDE_BUILD_ORDER.findIndex(building => norm(building) === name);
+
+      if (index >= 0) {
+        prio = 105 - index * 7;
+        reason = 'Guide-basierter Early-Game-Ausbau.';
+        source = `${GUIDE}: build focus`;
+      }
+
+      if (name === 'research lab' && item.level < 3) {
+        prio = 145;
+        reason = 'Lab Lv3 ist zentral Richtung Anomaly Scanning.';
+        source = `${GUIDE}: Lab Lv3`;
+      }
+
+      if ((name === 'ore mine' || name === 'silicate mine') && item.level >= 1) {
+        prio += 10;
+        reason = 'Ore/Silicate als frühe industrielle Basis.';
+      }
+
+      if (name === 'solar plant') {
+        prio = energy && (energy.free < 80 || energy.ratio >= 0.9) ? 125 : 72;
+        reason = energy ? `Energie-Reserve ${energy.free}. Solar nach Bedarf.` : 'Solar nach Bedarf.';
+        source = `${GUIDE}: power`;
+      }
+
+      if (name === 'alloy foundry' && item.level < 3) {
+        prio = 80;
+        reason = 'Ab Tag 2 Richtung Lv3, aber nach Lab/Anomaly-Pfad.';
+        source = `${GUIDE}: day 2 alloys`;
+      }
+
+      if (LOW_EARLY_PRIORITY.has(name)) {
+        prio = 12;
+        reason = 'Früh nicht priorisieren, außer konkreter Engpass.';
+        source = `${GUIDE}: early ignore`;
+      }
+
+      if (item.isStartable) prio += 15;
+      if (item.isBlocked) prio -= 20;
+      if (item.fromCache) prio -= 4;
+    }
+
+    return {
+      prio,
+      reason,
+      source
+    };
+  }
+
+  function actions(resources, buildings, research) {
+    return [...research, ...buildings]
+      .map(item => {
+        const ranking = rank(item, resources, buildings);
+        const aff = affordability(item, resources);
+
+        let actionState = 'unbekannt';
+
+        if (item.isBlocked) {
+          actionState = 'blockiert';
+        } else if (aff.affordable === true && item.isStartable) {
+          actionState = 'jetzt möglich';
+        } else if (aff.affordable === false) {
+          actionState = `wartet: ${aff.waitText}`;
+        } else if (item.isStartable) {
+          actionState = 'startbar';
+        } else if (item.fromCache) {
+          actionState = 'aus Cache';
+        }
+
+        let score = ranking.prio;
+
+        if (aff.affordable === true) score += 18;
+        if (aff.affordable === false && aff.waitHours <= 1) score += 10;
+        if (aff.affordable === false && aff.waitHours > 6) score -= 15;
+        if (item.isBlocked) score -= 28;
+
+        return {
+          ...item,
+          score,
+          reason: ranking.reason,
+          source: ranking.source,
+          affordability: aff,
+          actionState
+        };
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 14);
+  }
+
+  function warnings(resources, fleet) {
+    const output = [];
+    const energy = getEnergy(resources);
+
+    if (fleet.max && fleet.free > 0) {
+      output.push({
+        type: 'warn',
+        title: `${fleet.free} Fleet-Slot${fleet.free === 1 ? '' : 's'} frei`,
+        text: fleet.hasMining
+          ? 'Mining läuft. Freie Slots für Scouting/weitere Missionen prüfen.'
+          : 'Keine Mining-Mission erkannt. Salvaged Freighters früh fürs Mining nutzen.'
+      });
+    }
+
+    if (!fleet.hasMining) {
+      output.push({
+        type: 'danger',
+        title: 'Keine Mining-Mission erkannt',
+        text: fleet.fromCache
+          ? 'Auch im gespeicherten Fleet-Status wurde keine Mining-Mission erkannt.'
+          : 'Der Guide empfiehlt frühes Mining im Heimatsystem.'
+      });
+    }
+
+    if (energy && (energy.free < 40 || energy.ratio >= 0.92)) {
+      output.push({
+        type: 'danger',
+        title: 'Energie knapp',
+        text: `${energy.used}/${energy.produced}. Solar Plant prüfen.`
+      });
+    }
+
+    const caps = resources.filter(resource =>
+      resource.storageFullIn &&
+      soonFull(resource.storageFullIn) &&
+      resource.name !== 'Energy'
+    );
+
+    if (caps.length) {
+      output.push({
+        type: 'warn',
+        title: 'Lager/Cap bald voll',
+        text: caps.map(resource => `${resource.name}: ${resource.storageFullIn}`).join(', ')
+      });
+    }
+
+    return output;
+  }
+
+  function createPanel() {
+    if (document.getElementById(PANEL_ID)) return;
+
+    const panel = document.createElement('div');
+    panel.id = PANEL_ID;
+
+    panel.innerHTML = `
+      <div class="nlh-header">
+        <div>
+          <strong>Nexus Helper</strong>
+          <span class="nlh-version">v0.4.1</span>
+        </div>
+        <div class="nlh-actions">
+          <button class="nlh-toggle">−</button>
+          <button class="nlh-clear-cache">Cache</button>
+          <button class="nlh-refresh">↻</button>
+        </div>
+      </div>
+      <div class="nlh-body">Lade Daten...</div>
+    `;
+
+    const style = document.createElement('style');
+    style.textContent = `
+      #${PANEL_ID} {
+        position: fixed;
+        right: 14px;
+        bottom: 14px;
+        z-index: 999999;
+        width: 430px;
+        max-height: 84vh;
+        overflow: auto;
+        background: rgba(7,11,20,.97);
+        color: #e5e7eb;
+        border: 1px solid rgba(148,163,184,.35);
+        border-radius: 14px;
+        box-shadow: 0 18px 45px rgba(0,0,0,.48);
+        font-family: system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
+        font-size: 13px;
+      }
+
+      #${PANEL_ID}.collapsed {
+        width: 290px;
+      }
+
+      #${PANEL_ID}.collapsed .nlh-body {
+        display: none;
+      }
+
+      #${PANEL_ID} .nlh-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        gap: 10px;
+        padding: 10px 12px;
+        border-bottom: 1px solid rgba(148,163,184,.25);
+        position: sticky;
+        top: 0;
+        background: rgba(7,11,20,.99);
+      }
+
+      #${PANEL_ID} .nlh-version {
+        margin-left: 6px;
+        font-size: 11px;
+        color: #93c5fd;
+        font-weight: 650;
+      }
+
+      #${PANEL_ID} .nlh-actions {
+        display: flex;
+        gap: 6px;
+      }
+
+      #${PANEL_ID} button {
+        background: rgba(59,130,246,.18);
+        color: #dbeafe;
+        border: 1px solid rgba(96,165,250,.35);
+        border-radius: 8px;
+        cursor: pointer;
+        padding: 2px 8px;
+        font-family: inherit;
+        font-size: 12px;
+      }
+
+      #${PANEL_ID} .nlh-clear-cache {
+        background: rgba(148,163,184,.12);
+        color: #cbd5e1;
+        border-color: rgba(148,163,184,.28);
+      }
+
+      #${PANEL_ID} .nlh-body {
+        padding: 10px 12px 12px;
+      }
+
+      #${PANEL_ID} .nlh-section {
+        margin-bottom: 14px;
+      }
+
+      #${PANEL_ID} .nlh-section-title {
+        color: #93c5fd;
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: .08em;
+        margin-bottom: 6px;
+        display: flex;
+        justify-content: space-between;
+      }
+
+      #${PANEL_ID} .nlh-card {
+        padding: 8px 9px;
+        margin-bottom: 7px;
+        border: 1px solid rgba(148,163,184,.18);
+        border-radius: 10px;
+        background: rgba(15,23,42,.72);
+      }
+
+      #${PANEL_ID} .nlh-card.top {
+        border-color: rgba(96,165,250,.42);
+        background: rgba(30,64,175,.18);
+      }
+
+      #${PANEL_ID} .nlh-card-title {
+        font-weight: 750;
+        margin-bottom: 3px;
+      }
+
+      #${PANEL_ID} .nlh-reason {
+        color: #aab3c2;
+        font-size: 12px;
+        line-height: 1.35;
+      }
+
+      #${PANEL_ID} .nlh-row {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 8px;
+        padding: 4px 0;
+        border-bottom: 1px solid rgba(148,163,184,.10);
+      }
+
+      #${PANEL_ID} .nlh-muted {
+        color: #9ca3af;
+      }
+
+      #${PANEL_ID} .nlh-good {
+        color: #86efac;
+      }
+
+      #${PANEL_ID} .nlh-warn {
+        color: #fbbf24;
+        font-weight: 700;
+      }
+
+      #${PANEL_ID} .nlh-danger {
+        color: #fca5a5;
+        font-weight: 700;
+      }
+
+      #${PANEL_ID} .nlh-alert {
+        border-radius: 10px;
+        padding: 8px 9px;
+        margin-bottom: 7px;
+        border: 1px solid rgba(251,191,36,.28);
+        background: rgba(251,191,36,.08);
+      }
+
+      #${PANEL_ID} .nlh-alert.danger {
+        border-color: rgba(248,113,113,.32);
+        background: rgba(248,113,113,.09);
+      }
+
+      #${PANEL_ID} .nlh-small {
+        font-size: 11px;
+      }
+
+      #${PANEL_ID} .nlh-pill {
+        display: inline-block;
+        padding: 2px 6px;
+        border-radius: 999px;
+        background: rgba(96,165,250,.13);
+        border: 1px solid rgba(96,165,250,.25);
+        color: #bfdbfe;
+        font-size: 11px;
+        margin: 2px 4px 2px 0;
+      }
+
+      #${PANEL_ID} .nlh-pill.good {
+        background: rgba(34,197,94,.13);
+        border-color: rgba(34,197,94,.25);
+        color: #bbf7d0;
+      }
+
+      #${PANEL_ID} .nlh-pill.warn {
+        background: rgba(251,191,36,.13);
+        border-color: rgba(251,191,36,.25);
+        color: #fde68a;
+      }
+
+      #${PANEL_ID} .nlh-pill.danger {
+        background: rgba(248,113,113,.13);
+        border-color: rgba(248,113,113,.25);
+        color: #fecaca;
+      }
+
+      #${PANEL_ID} .nlh-link {
+        color: #93c5fd;
+        text-decoration: none;
+      }
+
+      #${PANEL_ID} .nlh-footer-note {
+        color: #64748b;
+        font-size: 11px;
+        line-height: 1.35;
+        margin-top: 8px;
+      }
+
+      #${PANEL_ID} .nlh-missing {
+        margin-top: 5px;
+      }
+
+      @media(max-width:700px) {
+        #${PANEL_ID} {
+          left: 10px;
+          right: 10px;
+          bottom: 10px;
+          width: auto;
+          max-height: 70vh;
+        }
+
+        #${PANEL_ID}.collapsed {
+          width: auto;
+        }
+      }
+    `;
+
+    document.head.appendChild(style);
+    document.body.appendChild(panel);
+
+    panel.querySelector('.nlh-refresh').addEventListener('click', render);
+
+    panel.querySelector('.nlh-toggle').addEventListener('click', () => {
+      settings.collapsed = !settings.collapsed;
+      saveJson(SETTINGS_KEY, settings);
+      applyCollapsed();
+    });
+
+    panel.querySelector('.nlh-clear-cache').addEventListener('click', () => {
+      localStorage.removeItem(SNAPSHOT_KEY);
+      render();
+    });
+
+    applyCollapsed();
+  }
+
+  function applyCollapsed() {
+    const panel = document.getElementById(PANEL_ID);
+
+    if (!panel) return;
+
+    panel.classList.toggle('collapsed', !!settings.collapsed);
+
+    const button = panel.querySelector('.nlh-toggle');
+
+    if (button) {
+      button.textContent = settings.collapsed ? '+' : '−';
+    }
+  }
+
+  function renderCard(action, index, top) {
+    const stateClass =
+      action.actionState === 'jetzt möglich' || action.actionState === 'startbar'
+        ? 'good'
+        : action.actionState === 'blockiert'
+          ? 'danger'
+          : 'warn';
+
+    const missingHtml = action.affordability?.missing?.length
+      ? `
+        <div class="nlh-missing">
+          ${action.affordability.missing.map(missing => `
+            <span class="nlh-pill warn">
+              fehlt ${esc(missing.name)} ${fmtNum(missing.deficit)} · ${fmtTime(missing.waitHours)}
+            </span>
+          `).join('')}
+        </div>
+      `
+      : '';
+
+    const costHtml = action.costs?.length
+      ? action.costs.map(cost => `
+          <span class="nlh-pill">${esc(cost.name)} ${fmtNum(cost.amount)}</span>
+        `).join('')
+      : '<span class="nlh-pill warn">Kosten nicht sichtbar</span>';
+
+    const meta = [
+      action.kind === 'research' ? 'Forschung' : 'Gebäude',
+      action.level != null ? `Lv.${action.level}${action.maxLevel ? '/' + action.maxLevel : ''}` : null,
+      action.nextLevel ? `→ ${action.nextLevel}` : null,
+      action.labRequired ? `Lab ${action.labRequired}` : null,
+      action.timeText || null,
+      action.fromCache ? 'Cache' : null
+    ].filter(Boolean);
+
+    const title = action.href
+      ? `<a class="nlh-link" href="${esc(action.href)}">${esc(action.name)}</a>`
+      : esc(action.name);
+
+    return `
+      <div class="nlh-card ${top ? 'top' : ''}">
+        <div class="nlh-card-title">${index + 1}. ${title}</div>
+        <div>
+          <span class="nlh-pill ${stateClass}">${esc(action.actionState)}</span>
+          ${meta.map(item => `<span class="nlh-pill">${esc(item)}</span>`).join('')}
+        </div>
+        <div class="nlh-reason">${esc(action.reason)}</div>
+        <div class="nlh-small">${costHtml}</div>
+        ${missingHtml}
+        <div class="nlh-muted nlh-small">Quelle: ${esc(action.source)} · Score ${Math.round(action.score)}</div>
+      </div>
+    `;
+  }
+
+  function render() {
+    const panel = document.getElementById(PANEL_ID);
+
+    if (!panel) return;
+
+    const resources = getResources();
+    const buildings = getBuildings();
+    const research = getResearch();
+    const fleet = fleetState();
+    const currentStatus = status(buildings);
+    const actionList = actions(resources, buildings, research);
+    const warningList = warnings(resources, fleet);
+
+    const statusBits = [];
+
+    if (currentStatus.queue) statusBits.push(`Queue ${currentStatus.queue}`);
+    if (currentStatus.slots) statusBits.push(`Slots ${currentStatus.slots}`);
+    if (fleet.max != null) statusBits.push(`Fleet ${fleet.active}/${fleet.max}${fleet.fromCache ? ' cached' : ''}`);
+    if (currentStatus.lab) statusBits.push(`Lab Lv.${currentStatus.lab}`);
+
+    const immediate = actionList.filter(action =>
+      action.actionState === 'jetzt möglich' ||
+      action.actionState === 'startbar'
+    );
+
+    const waiting = actionList
+      .filter(action => action.actionState.startsWith('wartet'))
+      .slice(0, 5);
+
+    const warningsHtml = warningList.length
+      ? warningList.map(warning => `
+          <div class="nlh-alert ${warning.type === 'danger' ? 'danger' : ''}">
+            <div class="${warning.type === 'danger' ? 'nlh-danger' : 'nlh-warn'}">${esc(warning.title)}</div>
+            <div class="nlh-reason">${esc(warning.text)}</div>
+          </div>
+        `).join('')
+      : '<div class="nlh-card"><div class="nlh-good">Keine akuten Warnungen erkannt.</div></div>';
+
+    const resourcesHtml = ['Ore', 'Silicates', 'Hydrogen', 'Alloys', 'Energy', 'Population', 'Bio-Extract']
+      .map(name => getRes(resources, name))
+      .filter(Boolean)
+      .map(resource => `
+        <div class="nlh-row">
+          <div>
+            <strong>${esc(resource.name)}</strong>
+            ${
+              resource.storageFullIn
+                ? `<div class="${soonFull(resource.storageFullIn) ? 'nlh-warn' : 'nlh-muted'} nlh-small">Lager voll: ${esc(resource.storageFullIn)}</div>`
+                : ''
+            }
+          </div>
+          <div class="${String(resource.net || resource.rate).startsWith('+') ? 'nlh-good' : 'nlh-muted'}">${esc(resource.net || resource.rate || '')}</div>
+        </div>
+      `).join('');
+
+    panel.querySelector('.nlh-body').innerHTML = `
+      <div class="nlh-section">
+        <div class="nlh-section-title">
+          <span>Status</span>
+          <span class="nlh-muted">${esc(location.pathname + location.search)}</span>
+        </div>
+        <div class="nlh-card">
+          ${statusBits.map(bit => `<span class="nlh-pill">${esc(bit)}</span>`).join('') || '<span class="nlh-muted">Status nicht erkannt.</span>'}
+          <div class="nlh-footer-note">Nur Overlay/Rechner. Keine Klicks, keine Requests, keine Automatisierung.</div>
+        </div>
+      </div>
+
+      <div class="nlh-section">
+        <div class="nlh-section-title">Jetzt sinnvoll</div>
+        ${
+          immediate.length
+            ? immediate.slice(0, 5).map((action, index) => renderCard(action, index, index === 0)).join('')
+            : '<div class="nlh-card"><div class="nlh-muted">Keine sofort startbare Guide-Aktion sichtbar.</div></div>'
+        }
+      </div>
+
+      <div class="nlh-section">
+        <div class="nlh-section-title">Warten bis bezahlbar</div>
+        ${
+          waiting.length
+            ? waiting.map((action, index) => renderCard(action, index, false)).join('')
+            : '<div class="nlh-card"><div class="nlh-muted">Keine Wartezeit-Ziele mit sichtbaren Kosten erkannt.</div></div>'
+        }
+      </div>
+
+      <div class="nlh-section">
+        <div class="nlh-section-title">Warnungen</div>
+        ${warningsHtml}
+      </div>
+
+      <div class="nlh-section">
+        <div class="nlh-section-title">Top-Prioritäten</div>
+        ${
+          actionList.length
+            ? actionList.slice(0, 8).map((action, index) => renderCard(action, index, index === 0)).join('')
+            : '<div class="nlh-card"><div class="nlh-muted">Keine Aktionen erkannt.</div></div>'
+        }
+      </div>
+
+      <div class="nlh-section">
+        <div class="nlh-section-title">Guide-Pfad</div>
+        <div class="nlh-card">
+          ${GUIDE_TECH_ORDER.map(item => `<span class="nlh-pill">${esc(item)}</span>`).join('')}
+        </div>
+      </div>
+
+      <div class="nlh-section">
+        <div class="nlh-section-title">Ressourcen</div>
+        ${resourcesHtml || '<div class="nlh-muted">Keine Ressourcen erkannt.</div>'}
+      </div>
+
+      <div class="nlh-footer-note">
+        Für beste Ergebnisse einmal /overview, /fleet, /mining, /buildings und alle Research-Branches öffnen. Research/Fleet/Buildings werden lokal gecached.
+      </div>
+    `;
+  }
+
+  function boot() {
+    if (!document.body) return;
+
+    createPanel();
+    render();
+  }
+
+  let timer = null;
+
+  new MutationObserver(() => {
+    clearTimeout(timer);
+    timer = setTimeout(boot, 350);
+  }).observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+    characterData: true
+  });
+
+  boot();
+})();
