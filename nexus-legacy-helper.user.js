@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nexus Legacy Helper
 // @namespace    https://niceeins.local/
-// @version      0.7.3
+// @version      0.7.4
 // @description  Passive guide-based helper for Nexus Legacy: resources, build/research hints, affordability, wait times, research/fleet cache. No automation.
 // @match        https://*.nexuslegacy.space/*
 // @match        https://nexuslegacy.space/*
@@ -17,6 +17,7 @@
   const PANEL_ID = 'nlh-panel';
   const SETTINGS_KEY = 'nexusLegacyHelper.v041.settings';
   const SNAPSHOT_KEY = 'nexusLegacyHelper.v041.snapshots';
+  const DOM_DUMP_KEY = 'nexusLegacyHelper.v041.domDumps';
   const GUIDE = 'Determinator Beginner Guide';
 
   const GUIDE_TECH_ORDER = [
@@ -126,6 +127,58 @@
   function saveSnapshots(snapshots) {
     snapshots.updatedAt = Date.now();
     saveJson(SNAPSHOT_KEY, snapshots);
+  }
+
+  function getAllDomDumps() {
+    const raw = loadJson(DOM_DUMP_KEY, {});
+    return raw && typeof raw === 'object' ? raw : {};
+  }
+
+  function compactHtml(value) {
+    return String(value || '')
+      .replace(/\s+/g, ' ')
+      .replace(/>\s+</g, '><')
+      .trim();
+  }
+
+  function dumpElements(selector, limit = 30) {
+    return [...document.querySelectorAll(selector)]
+      .slice(0, limit)
+      .map((el, index) => ({
+        index,
+        text: (el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 1200),
+        html: compactHtml(el.outerHTML).slice(0, 12000)
+      }));
+  }
+
+  function captureDomDump() {
+    const key = location.pathname + location.search;
+    const dump = {
+      version: '0.7.4',
+      capturedAt: new Date().toISOString(),
+      path: key,
+      title: document.title,
+      domDumpPages: Object.keys(getAllDomDumps()).sort(),
+      selectors: {
+        resources: dumpElements('.resource-bar .resource-item'),
+        overviewBuildings: dumpElements('.ov-bld-card'),
+        buildings: dumpElements('.building-card'),
+        research: dumpElements('.research-card'),
+        fleet: dumpElements('.fleet-missions-card,.fleet-page,.fleet-section,.missions-list,.mission-card,.ov-mission-card,[class*="mission-card"]'),
+        status: dumpElements('.bld-stat-chip,.res-hero-sub,.sidebar-link')
+      },
+      parsed: {
+        resources: getResources(),
+        buildings: getBuildings(),
+        research: getResearch(),
+        fleet: fleetState()
+      }
+    };
+
+    const all = getAllDomDumps();
+    all[key] = dump;
+    saveJson(DOM_DUMP_KEY, all);
+    return dump;
   }
 
   function esc(value) {
@@ -1115,11 +1168,13 @@
   function buildDataQuality(resources, buildings, researchItems, fleet, nextAction, buildingAdvisor) {
     const snapshots = getSnapshots();
     const cachedBranches = getCachedBranches();
+    const domDumpPages = Object.keys(getAllDomDumps()).sort();
 
     return {
-      version: '0.7.3',
+      version: '0.7.4',
       path: location.pathname + location.search,
       cachedBranches,
+      domDumpPages,
       buildingsCached: Array.isArray(snapshots.buildings) && snapshots.buildings.length > 0,
       fleetCached: !!snapshots.fleet,
       miningDetected: !!fleet.hasMining,
@@ -1630,7 +1685,7 @@
       <div class="nlh-header">
         <div class="nlh-title">
           <strong>Nexus Helper</strong>
-          <span class="nlh-version">v0.7.3</span>
+          <span class="nlh-version">v0.7.4</span>
         </div>
         <div class="nlh-rail-status"></div>
         <div class="nlh-actions">
@@ -2660,8 +2715,11 @@
           <span class="nlh-pill ${dataQuality.fleetCached ? 'good' : 'warn'}">Fleet cached: ${dataQuality.fleetCached ? 'Ja' : 'Nein'}</span>
           <span class="nlh-pill ${dataQuality.miningDetected ? 'good' : 'danger'}">Mining erkannt: ${dataQuality.miningDetected ? 'Ja' : 'Nein'}</span>
           <span class="nlh-pill">Update: ${esc(dataQuality.lastUpdated)}</span>
+          <span class="nlh-pill">DOM Dumps: ${esc(dataQuality.domDumpPages.length)}</span>
         </div>
         <button class="nlh-debug-copy">Debug kopieren</button>
+        <button class="nlh-debug-copy data-dump-current">DOM Dump kopieren</button>
+        <button class="nlh-debug-copy data-dump-all">Alle Dumps kopieren</button>
         <div class="nlh-debug-output nlh-footer-note"></div>
       </div>
     `;
@@ -2679,15 +2737,14 @@
     return buildDataQuality(resources, buildings, research, fleet, nextAction, advisor);
   }
 
-  function copyDebugData() {
-    const output = JSON.stringify(getCurrentDebugData(), null, 2);
+  function writeDebugOutput(output, successText) {
     const panel = document.getElementById(PANEL_ID);
     const target = panel?.querySelector('.nlh-debug-output');
 
     if (navigator.clipboard?.writeText) {
       navigator.clipboard.writeText(output)
         .then(() => {
-          if (target) target.textContent = 'Debug JSON kopiert.';
+          if (target) target.textContent = successText;
         })
         .catch(() => {
           if (target) target.innerHTML = `<textarea rows="6" style="width:100%">${esc(output)}</textarea>`;
@@ -2698,8 +2755,25 @@
     if (target) {
       target.innerHTML = `<textarea rows="6" style="width:100%">${esc(output)}</textarea>`;
     } else {
-      prompt('Debug JSON', output);
+      prompt(successText, output);
     }
+  }
+
+  function copyDebugData() {
+    const output = JSON.stringify(getCurrentDebugData(), null, 2);
+    writeDebugOutput(output, 'Debug JSON kopiert.');
+  }
+
+  function copyDomDump(allPages = false) {
+    const payload = allPages
+      ? {
+          version: '0.7.4',
+          exportedAt: new Date().toISOString(),
+          pages: getAllDomDumps()
+        }
+      : captureDomDump();
+    const output = JSON.stringify(payload, null, 2);
+    writeDebugOutput(output, allPages ? 'Alle DOM Dumps kopiert.' : 'DOM Dump kopiert.');
   }
 
   function renderBuildingAdvisor(advisor) {
@@ -2824,6 +2898,7 @@
     const nextActionPlanner = buildNextActionPlanner(resources, buildings, research, fleet, goalState, buildingAdvisor);
     const researchPlan = buildResearchDependencyPlan('Anomaly Scanning', research, buildings);
     const sessionPlan = buildSessionPlan(resources, buildings, research, fleet, nextActionPlanner, buildingAdvisor);
+    captureDomDump();
     const dataQuality = buildDataQuality(resources, buildings, research, fleet, nextActionPlanner, buildingAdvisor);
     const actionList = actions(resources, buildings, research);
     const warningList = warnings(resources, fleet);
@@ -3097,6 +3172,8 @@
     setupSectionDragAndDrop(panel);
     applyCompactMode();
     panel.querySelector('.nlh-debug-copy')?.addEventListener('click', copyDebugData);
+    panel.querySelector('.data-dump-current')?.addEventListener('click', () => copyDomDump(false));
+    panel.querySelector('.data-dump-all')?.addEventListener('click', () => copyDomDump(true));
   }
 
   function boot() {

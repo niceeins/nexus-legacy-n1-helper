@@ -9,8 +9,8 @@ function includes(text, message) {
   assert(source.includes(text), message || `Expected source to include ${text}`);
 }
 
-includes('@version      0.7.3', 'userscript header version should be 0.7.3');
-includes('<span class="nlh-version">v0.7.3</span>', 'panel version should be v0.7.3');
+includes('@version      0.7.4', 'userscript header version should be 0.7.4');
+includes('<span class="nlh-version">v0.7.4</span>', 'panel version should be v0.7.4');
 
 [
   'function getBuildingAdvisor(resources, buildings, researchItems, fleetState)',
@@ -23,6 +23,9 @@ includes('<span class="nlh-version">v0.7.3</span>', 'panel version should be v0.
   'function renderResearchPlan(plan)',
   'function renderSessionPlan(plan)',
   'function renderDataQuality(dataQuality)',
+  'function captureDomDump()',
+  'function getAllDomDumps()',
+  'function copyDomDump(allPages = false)',
   'function renderCollapsibleSection(id, title, html, options = {})',
   'function normalizeSectionOrder(order)',
   'function renderOrderedDetailSections(sectionMap)',
@@ -59,6 +62,11 @@ includes('<span class="nlh-version">v0.7.3</span>', 'panel version should be v0.
   'Session Plan',
   'Datenstatus',
   'Debug kopieren',
+  'DOM Dump kopieren',
+  'Alle Dumps kopieren',
+  'domDumpPages',
+  'data-dump-current',
+  'data-dump-all',
   'Aktuell wichtig',
   'Compact Dashboard',
   'Compact',
@@ -111,4 +119,4 @@ includes('function renderRailStatus(resources, warningList)', 'collapsed rail sh
 includes('class="nlh-rail-status"', 'collapsed rail should have a visible status container');
 includes('⚠', 'collapsed rail should show an alert marker when important warnings exist');
 
-console.log('v0.7.3 planner source checks passed');
+console.log('v0.7.4 planner source checks passed');
