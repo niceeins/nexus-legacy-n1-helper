@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.8
+
+- Reworked the top overlay into a single Command Center with one primary action.
+- Added a separate running-builds summary so active upgrades are visible but not re-recommended.
+- Moved detailed advisor/debug data behind quieter collapsed sections.
+- Fixed collapsed rail positioning and widened the visible side rail.
+- Removed unused legacy render markup and cleaned up UTF-8 text issues.
+
 ## 0.7.7
 
 - Preserve detailed building cache data when visiting Overview so active upgrades and costs are not lost.

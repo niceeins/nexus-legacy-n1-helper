@@ -9,8 +9,8 @@ function includes(text, message) {
   assert(source.includes(text), message || `Expected source to include ${text}`);
 }
 
-includes('@version      0.7.7', 'userscript header version should be 0.7.7');
-includes('<span class="nlh-version">v0.7.7</span>', 'panel version should be v0.7.7');
+includes('@version      0.7.8', 'userscript header version should be 0.7.8');
+includes('<span class="nlh-version">v0.7.8</span>', 'panel version should be v0.7.8');
 
 [
   'function getBuildingAdvisor(resources, buildings, researchItems, fleetState)',
@@ -33,6 +33,9 @@ includes('<span class="nlh-version">v0.7.7</span>', 'panel version should be v0.
   'function setupSectionDragAndDrop(panel)',
   'function setupPeekHover(panel)',
   'function renderTopSummary(nextActionPlanner, buildingAdvisor, goalState, warningList, cacheHint)',
+  'function renderCommandCenter(nextActionPlanner, runningBuildings, warningList)',
+  'function renderRunningBuildings(buildings)',
+  'function renderDataQualityCompact(dataQuality)',
   'function renderCompactDashboard(currentStatus, fleet, dataQuality, resources)',
   'function renderCompactResources(resources)',
   'function copyDebugData()',
@@ -68,10 +71,8 @@ includes('<span class="nlh-version">v0.7.7</span>', 'panel version should be v0.
 ].forEach(text => includes(text, `Expected planner/dependency data: ${text}`));
 
 [
-  'Next Action',
   'Research Plan',
   'Session Plan',
-  'Datenstatus',
   'Debug kopieren',
   'DOM Dump kopieren',
   'Alle Dumps kopieren',
@@ -81,13 +82,18 @@ includes('<span class="nlh-version">v0.7.7</span>', 'panel version should be v0.
   'domDumpPages',
   'data-dump-current',
   'data-dump-all',
-  'top: 14px;',
-  'bottom: auto;',
+  'bottom: 14px;',
+  'right: -342px;',
+  'width: 88px;',
   'height: 84vh;',
   'order: -1;',
   'Energie frei',
   'Silicates',
-  'Aktuell wichtig',
+  'Command Center',
+  'Primäre Aktion',
+  'Läuft gerade',
+  'Keine laufenden Builds erkannt',
+  'Debug öffnen',
   'Compact Dashboard',
   'Compact',
   'Details',
@@ -134,10 +140,19 @@ assert(!/\bXMLHttpRequest\b/.test(source), 'script must not use XMLHttpRequest')
 assert(!/\.click\s*\(/.test(source), 'script must not perform DOM clicks');
 assert(!/\bPOST\b|\bPUT\b|\bDELETE\b/.test(source), 'script must not contain write request verbs');
 assert(!/[ÃÂ�]/.test(source), 'userscript must not contain mojibake/broken UTF-8 characters');
-includes("right: -388px;", 'collapsed panel should slide right into a side rail');
+includes("right: -342px;", 'collapsed panel should slide right into a wider side rail');
 includes("writing-mode: vertical-rl;", 'collapsed panel should keep a vertical side rail header');
 includes('function renderRailStatus(resources, warningList)', 'collapsed rail should render key resource info');
 includes('class="nlh-rail-status"', 'collapsed rail should have a visible status container');
 includes('⚠', 'collapsed rail should show an alert marker when important warnings exist');
 
-console.log('v0.7.7 planner source checks passed');
+includes('const runningBuildings = buildings.filter(building => building.isUpgrading)', 'render should derive running buildings once');
+includes("renderCommandCenter(nextActionPlanner, runningBuildings, warningList)", 'top UI should use command center');
+includes("'building-order': renderCollapsibleSection('building-order', 'Gebäudeberater'", 'building detail title should be advisor not duplicate order');
+includes("'data-debug': renderCollapsibleSection('data-debug', 'Debug', renderDataQuality(dataQuality)", 'debug detail title should be short');
+includes("defaultOpen: false,\n        badge: buildingAdvisor.recommended", 'building detail should start collapsed');
+
+const bodyRenderMatches = source.match(/panel\.querySelector\('\.nlh-body'\)\.innerHTML =/g) || [];
+assert.strictEqual(bodyRenderMatches.length, 1, 'render should assign .nlh-body innerHTML once');
+
+console.log('v0.7.8 planner source checks passed');

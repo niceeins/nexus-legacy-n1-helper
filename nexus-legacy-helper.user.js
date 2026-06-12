@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nexus Legacy Helper
 // @namespace    https://niceeins.local/
-// @version      0.7.7
+// @version      0.7.8
 // @description  Passive guide-based helper for Nexus Legacy: resources, build/research hints, affordability, wait times, research/fleet cache. No automation.
 // @match        https://*.nexuslegacy.space/*
 // @match        https://nexuslegacy.space/*
@@ -173,7 +173,7 @@
   function captureDomDump() {
     const key = location.pathname + location.search;
     const dump = {
-      version: '0.7.7',
+      version: '0.7.8',
       capturedAt: new Date().toISOString(),
       path: key,
       title: document.title,
@@ -203,7 +203,7 @@
 
   function getDomDumpPayload() {
     return {
-      version: '0.7.7',
+      version: '0.7.8',
       exportedAt: new Date().toISOString(),
       pages: getAllDomDumps()
     };
@@ -230,7 +230,7 @@
       .replace(/Lv\.?\s*\d+.*$/i, '')
       .replace(/Level\s*\d+.*$/i, '')
       .replace(/[✓✔🔒]/g, '')
-      .replace(/→.*$/i, '')
+      .replace(/(?:->|→).*$/i, '')
       .replace(/\s+/g, ' ')
       .trim();
   }
@@ -536,7 +536,7 @@
 
     const levelText = card.querySelector('.building-level')?.textContent || '';
     const levelMatch = levelText.match(/\bLv\.?\s*(\d{1,2})\b/i);
-    const nextMatch = levelText.match(/→\s*(\d{1,2})/i);
+    const nextMatch = levelText.match(/(?:->|→)\s*(\d{1,2})/i);
 
     const buttonText = [...card.querySelectorAll('button')]
       .map(button => button.textContent.trim())
@@ -1217,7 +1217,7 @@
     const domDumpPages = Object.keys(getAllDomDumps()).sort();
 
     return {
-      version: '0.7.7',
+      version: '0.7.8',
       path: location.pathname + location.search,
       cachedBranches,
       domDumpPages,
@@ -1737,7 +1737,7 @@
       <div class="nlh-header">
         <div class="nlh-title">
           <strong>Nexus Helper</strong>
-          <span class="nlh-version">v0.7.7</span>
+          <span class="nlh-version">v0.7.8</span>
         </div>
         <div class="nlh-rail-status"></div>
         <div class="nlh-actions">
@@ -1772,9 +1772,8 @@
       }
 
       #${PANEL_ID}.collapsed {
-        top: 14px;
-        bottom: auto;
-        right: -388px;
+        bottom: 14px;
+        right: -342px;
         width: 430px;
         height: 84vh;
         max-height: 84vh;
@@ -1803,7 +1802,7 @@
       }
 
       #${PANEL_ID}.collapsed .nlh-header {
-        width: 42px;
+        width: 88px;
         height: 100%;
         box-sizing: border-box;
         flex-direction: column;
@@ -1850,6 +1849,9 @@
         font-size: 11px;
         font-weight: 700;
         white-space: nowrap;
+        max-width: 78px;
+        overflow: hidden;
+        text-overflow: ellipsis;
       }
 
       #${PANEL_ID} .nlh-actions {
@@ -1918,6 +1920,33 @@
         border-color: rgba(96,165,250,.42);
         background: rgba(30,64,175,.18);
         padding: 9px 10px;
+      }
+
+      #${PANEL_ID} .nlh-command-grid {
+        display: grid;
+        grid-template-columns: minmax(0, 1.25fr) minmax(0, .85fr);
+        gap: 7px;
+      }
+
+      #${PANEL_ID} .nlh-command-pills {
+        margin-top: 5px;
+      }
+
+      #${PANEL_ID} .nlh-running-list {
+        display: grid;
+        gap: 6px;
+      }
+
+      #${PANEL_ID} .nlh-running-row {
+        display: grid;
+        gap: 4px;
+        padding-bottom: 6px;
+        border-bottom: 1px solid rgba(148,163,184,.14);
+      }
+
+      #${PANEL_ID} .nlh-running-row:last-child {
+        padding-bottom: 0;
+        border-bottom: 0;
       }
 
       #${PANEL_ID} .nlh-card-title {
@@ -2180,8 +2209,12 @@
         }
 
         #${PANEL_ID}.collapsed {
-          right: -318px;
+          right: -272px;
           width: 360px;
+        }
+
+        #${PANEL_ID} .nlh-command-grid {
+          grid-template-columns: 1fr;
         }
       }
     `;
@@ -2257,7 +2290,7 @@
     const meta = [
       action.kind === 'research' ? 'Forschung' : 'Gebäude',
       action.level != null ? `Lv.${action.level}${action.maxLevel ? '/' + action.maxLevel : ''}` : null,
-      action.nextLevel ? `→ ${action.nextLevel}` : null,
+      action.nextLevel ? `-> ${action.nextLevel}` : null,
       action.labRequired ? `Lab ${action.labRequired}` : null,
       action.timeText || null,
       action.fromCache ? 'Cache' : null
@@ -2486,6 +2519,66 @@
           <span class="nlh-pill ${stateClass}">${esc(item.actionState)}</span>
           ${item.affordability?.known ? `<span class="nlh-pill ${item.affordability.affordable ? 'good' : 'warn'}">${esc(item.affordability.waitText)}</span>` : '<span class="nlh-pill warn">Kosten fehlen</span>'}
         </div>
+      </div>
+    `;
+  }
+
+  function renderRunningBuildings(buildings) {
+    const running = buildings.slice(0, 3);
+
+    if (!running.length) {
+      return '<div class="nlh-muted nlh-small">Keine laufenden Builds erkannt.</div>';
+    }
+
+    return `
+      <div class="nlh-running-list">
+        ${running.map(building => `
+          <div class="nlh-running-row">
+            <strong>${esc(building.name)}</strong>
+            <span class="nlh-pill warn">Lv.${esc(building.level)} -> ${esc(building.nextLevel || building.level + 1)}</span>
+            <span class="nlh-pill warn">läuft</span>
+            ${building.buttonText ? `<span class="nlh-muted nlh-small">${esc(building.buttonText)}</span>` : ''}
+          </div>
+        `).join('')}
+      </div>
+    `;
+  }
+
+  function renderCommandCenter(nextActionPlanner, runningBuildings, warningList) {
+    const primaryTone = pillClass(nextActionPlanner.primaryStatus);
+    const topWarning = warningList.find(warning => warning.type === 'danger') || warningList[0];
+
+    return `
+      <div class="nlh-section nlh-command-center">
+        <div class="nlh-section-title">
+          <span>Command Center</span>
+          <span class="nlh-muted">${esc(location.pathname + location.search)}</span>
+        </div>
+        <div class="nlh-command-grid">
+          <div class="nlh-card top">
+            <div class="nlh-card-title">Primäre Aktion</div>
+            <strong>${esc(nextActionPlanner.primaryAction || 'Daten vervollständigen')}</strong>
+            <div class="nlh-command-pills">
+              <span class="nlh-pill ${primaryTone}">${esc(nextActionPlanner.primaryStatus)}</span>
+              <span class="nlh-pill ${pillClass(nextActionPlanner.confidence)}">Confidence: ${esc(nextActionPlanner.confidence)}</span>
+              ${nextActionPlanner.affordability?.known ? `<span class="nlh-pill ${nextActionPlanner.affordability.affordable ? 'good' : 'warn'}">${esc(nextActionPlanner.affordability.waitText)}</span>` : ''}
+            </div>
+            <div class="nlh-reason nlh-clamp">${esc(nextActionPlanner.explanation)}</div>
+            ${renderMissingPills(nextActionPlanner.affordability?.missing, 2)}
+          </div>
+          <div class="nlh-card">
+            <div class="nlh-card-title">Läuft gerade</div>
+            ${renderRunningBuildings(runningBuildings)}
+          </div>
+        </div>
+        ${
+          topWarning
+            ? `<div class="nlh-alert ${topWarning.type === 'danger' ? 'danger' : ''}">
+                <div class="${topWarning.type === 'danger' ? 'nlh-danger' : 'nlh-warn'}">${esc(topWarning.title)}</div>
+                <div class="nlh-reason nlh-clamp">${esc(topWarning.text)}</div>
+              </div>`
+            : '<div class="nlh-card"><div class="nlh-good">Keine akuten Warnungen erkannt.</div></div>'
+        }
       </div>
     `;
   }
@@ -2780,6 +2873,22 @@
     `;
   }
 
+  function renderDataQualityCompact(dataQuality) {
+    const researchCached = dataQuality.cachedBranches.filter(branch => branch.cached).length;
+
+    return `
+      <div class="nlh-card">
+        <div class="nlh-card-title">Debug öffnen</div>
+        <div>
+          <span class="nlh-pill">Research ${researchCached}/${esc(dataQuality.cachedBranches.length)}</span>
+          <span class="nlh-pill ${dataQuality.buildingsCached ? 'good' : 'warn'}">Buildings ${dataQuality.buildingsCached ? 'ok' : 'fehlt'}</span>
+          <span class="nlh-pill ${dataQuality.fleetCached ? 'good' : 'warn'}">Fleet ${dataQuality.fleetCached ? 'ok' : 'fehlt'}</span>
+          <span class="nlh-pill">Dumps ${esc(dataQuality.domDumpPages.length)}</span>
+        </div>
+      </div>
+    `;
+  }
+
   function getCurrentDebugData() {
     const resources = getResources();
     const buildings = getBuildings();
@@ -2895,7 +3004,7 @@
           </div>
           <div>
             <strong>${esc(item.name)}</strong>
-            <span class="nlh-pill">Lv.${esc(item.level)} → ${esc(item.targetLevel)}</span>
+            <span class="nlh-pill">Lv.${esc(item.level)} -> ${esc(item.targetLevel)}</span>
             <span class="nlh-pill ${stateClass}">${esc(item.actionState)}</span>
             ${item.fromCache ? '<span class="nlh-pill warn">aus Cache</span>' : ''}
             ${waitHtml}
@@ -2953,14 +3062,8 @@
     const dataQuality = buildDataQuality(resources, buildings, research, fleet, nextActionPlanner, buildingAdvisor);
     const actionList = actions(resources, buildings, research);
     const warningList = warnings(resources, fleet);
+    const runningBuildings = buildings.filter(building => building.isUpgrading);
     const railStatus = renderRailStatus(resources, warningList);
-
-    const statusBits = [];
-
-    if (currentStatus.queue) statusBits.push(`Queue ${currentStatus.queue}`);
-    if (currentStatus.slots) statusBits.push(`Slots ${currentStatus.slots}`);
-    if (fleet.max != null) statusBits.push(`Fleet ${fleet.active}/${fleet.max}${fleet.fromCache ? ' cached' : ''}`);
-    if (currentStatus.lab) statusBits.push(`Lab Lv.${currentStatus.lab}`);
 
     const immediate = actionList.filter(action =>
       action.actionState === 'jetzt möglich' ||
@@ -2971,137 +3074,13 @@
       .filter(action => action.actionState.startsWith('wartet'))
       .slice(0, 5);
 
-    const warningsHtml = warningList.length
-      ? warningList.map(warning => `
-          <div class="nlh-alert ${warning.type === 'danger' ? 'danger' : ''}">
-            <div class="${warning.type === 'danger' ? 'nlh-danger' : 'nlh-warn'}">${esc(warning.title)}</div>
-            <div class="nlh-reason">${esc(warning.text)}</div>
-          </div>
-        `).join('')
-      : '<div class="nlh-card"><div class="nlh-good">Keine akuten Warnungen erkannt.</div></div>';
-
-    const resourcesHtml = ['Ore', 'Silicates', 'Hydrogen', 'Alloys', 'Energy', 'Population', 'Bio-Extract']
-      .map(name => getRes(resources, name))
-      .filter(Boolean)
-      .map(resource => `
-        <div class="nlh-row">
-          <div>
-            <strong>${esc(resource.name)}</strong>
-            ${
-              resource.storageFullIn
-                ? `<div class="${soonFull(resource.storageFullIn) ? 'nlh-warn' : 'nlh-muted'} nlh-small">Lager voll: ${esc(resource.storageFullIn)}</div>`
-                : ''
-            }
-          </div>
-          <div class="${String(resource.net || resource.rate).startsWith('+') ? 'nlh-good' : 'nlh-muted'}">${esc(resource.net || resource.rate || '')}</div>
-        </div>
-      `).join('');
-
-    const legacyLayout = `
-      ${renderOnboarding(dataQuality)}
-
-      <div class="nlh-section">
-        <div class="nlh-section-title">
-          <span>Status</span>
-          <span class="nlh-muted">${esc(location.pathname + location.search)}</span>
-        </div>
-        <div class="nlh-card">
-          ${statusBits.map(bit => `<span class="nlh-pill">${esc(bit)}</span>`).join('') || '<span class="nlh-muted">Status nicht erkannt.</span>'}
-          <div class="nlh-footer-note">Nur Overlay/Rechner. Keine Klicks, keine Requests, keine Automatisierung.</div>
-        </div>
-      </div>
-
-      <div class="nlh-section">
-        <div class="nlh-section-title">Hauptziel</div>
-        ${renderGoal(goalState, cacheHint)}
-      </div>
-
-      <div class="nlh-section">
-        <div class="nlh-section-title">Next Action</div>
-        ${renderNextAction(nextActionPlanner)}
-      </div>
-
-      <div class="nlh-section">
-        <div class="nlh-section-title">Research Plan</div>
-        ${renderResearchPlan(researchPlan)}
-      </div>
-
-      <div class="nlh-section">
-        <div class="nlh-section-title">Session Plan</div>
-        ${renderSessionPlan(sessionPlan)}
-      </div>
-
-      <div class="nlh-section">
-        <div class="nlh-section-title">Gebäudeberater</div>
-        ${renderBuildingAdvisor(buildingAdvisor)}
-      </div>
-
-      <div class="nlh-section">
-        <div class="nlh-section-title">Guide-Checkliste</div>
-        ${renderChecklist(checklist)}
-      </div>
-
-      <div class="nlh-section">
-        <div class="nlh-section-title">Jetzt sinnvoll</div>
-        ${
-          immediate.length
-            ? immediate.slice(0, 5).map((action, index) => renderCard(action, index, index === 0)).join('')
-            : '<div class="nlh-card"><div class="nlh-muted">Keine sofort startbare Guide-Aktion sichtbar.</div></div>'
-        }
-      </div>
-
-      <div class="nlh-section">
-        <div class="nlh-section-title">Warten bis bezahlbar</div>
-        ${
-          waiting.length
-            ? waiting.map((action, index) => renderCard(action, index, false)).join('')
-            : '<div class="nlh-card"><div class="nlh-muted">Keine Wartezeit-Ziele mit sichtbaren Kosten erkannt.</div></div>'
-        }
-      </div>
-
-      <div class="nlh-section">
-        <div class="nlh-section-title">Warnungen</div>
-        ${warningsHtml}
-      </div>
-
-      <div class="nlh-section">
-        <div class="nlh-section-title">Top-Prioritäten</div>
-        ${
-          actionList.length
-            ? actionList.slice(0, 8).map((action, index) => renderCard(action, index, index === 0)).join('')
-            : '<div class="nlh-card"><div class="nlh-muted">Keine Aktionen erkannt.</div></div>'
-        }
-      </div>
-
-      <div class="nlh-section">
-        <div class="nlh-section-title">Guide-Pfad</div>
-        <div class="nlh-card">
-          ${GUIDE_TECH_ORDER.map(item => `<span class="nlh-pill">${esc(item)}</span>`).join('')}
-        </div>
-      </div>
-
-      <div class="nlh-section">
-        <div class="nlh-section-title">Ressourcen</div>
-        ${resourcesHtml || '<div class="nlh-muted">Keine Ressourcen erkannt.</div>'}
-      </div>
-
-      <div class="nlh-section">
-        <div class="nlh-section-title">Datenstatus</div>
-        ${renderDataQuality(dataQuality)}
-      </div>
-
-      <div class="nlh-footer-note">
-        Für beste Ergebnisse einmal /overview, /fleet, /mining, /buildings und alle Research-Branches öffnen. Research/Fleet/Buildings werden lokal gecached.
-      </div>
-    `;
-
     const detailSections = {
       'research-plan': renderCollapsibleSection('research-plan', 'Research Plan', renderResearchPlan(researchPlan), {
         defaultOpen: true,
         badge: `<span class="nlh-pill ${researchPlan.startable ? 'good' : researchPlan.blocked ? 'danger' : 'warn'}">${esc(researchPlan.progress.done)}/${esc(researchPlan.progress.total)}</span>`
       }),
-      'building-order': renderCollapsibleSection('building-order', 'Gebäude-Reihenfolge', renderBuildingOrder(buildingAdvisor), {
-        defaultOpen: true,
+      'building-order': renderCollapsibleSection('building-order', 'Gebäudeberater', renderBuildingOrder(buildingAdvisor), {
+        defaultOpen: false,
         badge: buildingAdvisor.recommended ? `<span class="nlh-pill ${buildingAdvisor.recommended.actionState === 'jetzt möglich' ? 'good' : 'warn'}">${esc(buildingAdvisor.recommended.actionState)}</span>` : '<span class="nlh-pill warn">fehlt</span>'
       }),
       'session-plan': renderCollapsibleSection('session-plan', 'Session Plan', renderSessionPlan(sessionPlan), {
@@ -3116,7 +3095,7 @@
         defaultOpen: false,
         muted: true
       }),
-      'data-debug': renderCollapsibleSection('data-debug', 'Datenstatus / Debug', renderDataQuality(dataQuality), {
+      'data-debug': renderCollapsibleSection('data-debug', 'Debug', renderDataQuality(dataQuality), {
         defaultOpen: false,
         muted: true
       }),
@@ -3141,58 +3120,9 @@
 
     panel.querySelector('.nlh-body').innerHTML = `
       ${renderOnboarding(dataQuality)}
-      ${renderTopSummary(nextActionPlanner, buildingAdvisor, goalState, warningList, cacheHint)}
+      ${renderCommandCenter(nextActionPlanner, runningBuildings, warningList)}
       ${renderCompactDashboard(currentStatus, fleet, dataQuality, resources)}
-
-      <div class="nlh-details">
-        ${renderCollapsibleSection('research-plan', 'Research Plan', renderResearchPlan(researchPlan), {
-          defaultOpen: true,
-          badge: `<span class="nlh-pill ${researchPlan.startable ? 'good' : researchPlan.blocked ? 'danger' : 'warn'}">${esc(researchPlan.progress.done)}/${esc(researchPlan.progress.total)}</span>`
-        })}
-        ${renderCollapsibleSection('building-order', 'Gebäude-Reihenfolge', renderBuildingOrder(buildingAdvisor), {
-          defaultOpen: true,
-          badge: buildingAdvisor.recommended ? `<span class="nlh-pill ${buildingAdvisor.recommended.actionState === 'jetzt möglich' ? 'good' : 'warn'}">${esc(buildingAdvisor.recommended.actionState)}</span>` : '<span class="nlh-pill warn">fehlt</span>'
-        })}
-        ${renderCollapsibleSection('session-plan', 'Session Plan', renderSessionPlan(sessionPlan), {
-          defaultOpen: false,
-          badge: `<span class="nlh-pill">${sessionPlan.now.length}</span>`
-        })}
-        ${renderCollapsibleSection('checklist', 'Guide-Checkliste', renderChecklist(checklist), {
-          defaultOpen: false,
-          badge: `<span class="nlh-pill">${checklist.filter(item => item.tone === 'good').length}/${checklist.length}</span>`
-        })}
-        ${renderCollapsibleSection('resources', 'Ressourcen', renderCompactResources(resources), {
-          defaultOpen: false,
-          muted: true
-        })}
-        ${renderCollapsibleSection('data-debug', 'Datenstatus / Debug', renderDataQuality(dataQuality), {
-          defaultOpen: false,
-          muted: true
-        })}
-        ${renderCollapsibleSection('priorities', 'Top-Prioritäten', renderTopPriorities(actionList, immediate, waiting, warningList), {
-          defaultOpen: false,
-          badge: `<span class="nlh-pill">${actionList.length}</span>`,
-          danger: warningList.some(warning => warning.type === 'danger')
-        })}
-        ${renderCollapsibleSection('guide-path', 'Guide-Pfad', `
-          <div class="nlh-card">
-            ${GUIDE_TECH_ORDER.map(item => `<span class="nlh-pill">${esc(item)}</span>`).join('')}
-          </div>
-        `, {
-          defaultOpen: false,
-          muted: true
-        })}
-      </div>
-
-      <div class="nlh-footer-note">
-        Nur Overlay/Rechner. Keine Klicks, keine Requests, keine Automatisierung.
-      </div>
-    `;
-
-    panel.querySelector('.nlh-body').innerHTML = `
-      ${renderOnboarding(dataQuality)}
-      ${renderTopSummary(nextActionPlanner, buildingAdvisor, goalState, warningList, cacheHint)}
-      ${renderCompactDashboard(currentStatus, fleet, dataQuality, resources)}
+      ${renderDataQualityCompact(dataQuality)}
 
       <div class="nlh-details">
         ${renderOrderedDetailSections(detailSections)}
@@ -3247,3 +3177,5 @@
 
   boot();
 })();
+
+
