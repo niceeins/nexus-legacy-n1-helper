@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.7.1
+
+- Compact UI cleanup
+- Added grouped overview layout
+- Added collapsible detail sections
+- Reduced visual noise in the overlay
+- Moved debug/data sections behind collapsed panels
+
 ## 0.7.0
 
 - Added Next Action Planner

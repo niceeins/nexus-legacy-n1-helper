@@ -9,8 +9,8 @@ function includes(text, message) {
   assert(source.includes(text), message || `Expected source to include ${text}`);
 }
 
-includes('@version      0.7.0', 'userscript header version should be 0.7.0');
-includes('<span class="nlh-version">v0.7.0</span>', 'panel version should be v0.7.0');
+includes('@version      0.7.1', 'userscript header version should be 0.7.1');
+includes('<span class="nlh-version">v0.7.1</span>', 'panel version should be v0.7.1');
 
 [
   'function getBuildingAdvisor(resources, buildings, researchItems, fleetState)',
@@ -23,6 +23,10 @@ includes('<span class="nlh-version">v0.7.0</span>', 'panel version should be v0.
   'function renderResearchPlan(plan)',
   'function renderSessionPlan(plan)',
   'function renderDataQuality(dataQuality)',
+  'function renderCollapsibleSection(id, title, html, options = {})',
+  'function renderTopSummary(nextActionPlanner, buildingAdvisor, goalState, warningList, cacheHint)',
+  'function renderCompactDashboard(currentStatus, fleet, dataQuality, resources)',
+  'function renderCompactResources(resources)',
   'function copyDebugData()',
   'function scoreBuildingCandidate(building, context)',
   'function getBuildingPhase(context)',
@@ -51,6 +55,15 @@ includes('<span class="nlh-version">v0.7.0</span>', 'panel version should be v0.
   'Session Plan',
   'Datenstatus',
   'Debug kopieren',
+  'Aktuell wichtig',
+  'Compact Dashboard',
+  'Compact',
+  'Details',
+  'data-section="${esc(id)}"',
+  "renderCollapsibleSection('research-plan'",
+  "renderCollapsibleSection('data-debug'",
+  'settings.compactMode',
+  'settings.sectionOpen',
   'Geb',
   'N',
   'Reihenfolge',
@@ -79,4 +92,4 @@ assert(!/\bXMLHttpRequest\b/.test(source), 'script must not use XMLHttpRequest')
 assert(!/\.click\s*\(/.test(source), 'script must not perform DOM clicks');
 assert(!/\bPOST\b|\bPUT\b|\bDELETE\b/.test(source), 'script must not contain write request verbs');
 
-console.log('v0.7.0 planner source checks passed');
+console.log('v0.7.1 planner source checks passed');

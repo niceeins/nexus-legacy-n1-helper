@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nexus Legacy Helper
 // @namespace    https://niceeins.local/
-// @version      0.7.0
+// @version      0.7.1
 // @description  Passive guide-based helper for Nexus Legacy: resources, build/research hints, affordability, wait times, research/fleet cache. No automation.
 // @match        https://*.nexuslegacy.space/*
 // @match        https://nexuslegacy.space/*
@@ -50,7 +50,27 @@
     'fighter doctrine'
   ]);
 
-  const settings = loadJson(SETTINGS_KEY, { collapsed: false });
+  const settings = normalizeSettings(loadJson(SETTINGS_KEY, {}));
+
+  function normalizeSettings(raw) {
+    return {
+      collapsed: !!raw.collapsed,
+      compactMode: !!raw.compactMode,
+      sectionOpen: {
+        ...{
+          'research-plan': true,
+          'building-order': true,
+          'session-plan': false,
+          checklist: false,
+          resources: false,
+          'data-debug': false,
+          priorities: false,
+          'guide-path': false
+        },
+        ...(raw.sectionOpen || {})
+      }
+    };
+  }
 
   function loadJson(key, fallback) {
     try {
@@ -1067,7 +1087,7 @@
     const cachedBranches = getCachedBranches();
 
     return {
-      version: '0.7.0',
+      version: '0.7.1',
       path: location.pathname + location.search,
       cachedBranches,
       buildingsCached: Array.isArray(snapshots.buildings) && snapshots.buildings.length > 0,
@@ -1580,10 +1600,11 @@
       <div class="nlh-header">
         <div>
           <strong>Nexus Helper</strong>
-          <span class="nlh-version">v0.7.0</span>
+          <span class="nlh-version">v0.7.1</span>
         </div>
         <div class="nlh-actions">
           <button class="nlh-toggle">−</button>
+          <button class="nlh-compact-toggle">Compact</button>
           <button class="nlh-clear-cache">Cache</button>
           <button class="nlh-refresh">↻</button>
         </div>
@@ -1604,7 +1625,7 @@
         background: rgba(7,11,20,.97);
         color: #e5e7eb;
         border: 1px solid rgba(148,163,184,.35);
-        border-radius: 14px;
+        border-radius: 12px;
         box-shadow: 0 18px 45px rgba(0,0,0,.48);
         font-family: system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
         font-size: 13px;
@@ -1639,18 +1660,20 @@
 
       #${PANEL_ID} .nlh-actions {
         display: flex;
-        gap: 6px;
+        gap: 5px;
+        flex-wrap: wrap;
+        justify-content: flex-end;
       }
 
       #${PANEL_ID} button {
         background: rgba(59,130,246,.18);
         color: #dbeafe;
         border: 1px solid rgba(96,165,250,.35);
-        border-radius: 8px;
+        border-radius: 7px;
         cursor: pointer;
-        padding: 2px 8px;
+        padding: 2px 7px;
         font-family: inherit;
-        font-size: 12px;
+        font-size: 11px;
       }
 
       #${PANEL_ID} .nlh-clear-cache {
@@ -1660,11 +1683,11 @@
       }
 
       #${PANEL_ID} .nlh-body {
-        padding: 10px 12px 12px;
+        padding: 8px 10px 10px;
       }
 
       #${PANEL_ID} .nlh-section {
-        margin-bottom: 14px;
+        margin-bottom: 9px;
       }
 
       #${PANEL_ID} .nlh-section-title {
@@ -1672,14 +1695,14 @@
         font-size: 11px;
         text-transform: uppercase;
         letter-spacing: .08em;
-        margin-bottom: 6px;
+        margin-bottom: 5px;
         display: flex;
         justify-content: space-between;
       }
 
       #${PANEL_ID} .nlh-card {
-        padding: 8px 9px;
-        margin-bottom: 7px;
+        padding: 7px 8px;
+        margin-bottom: 6px;
         border: 1px solid rgba(148,163,184,.18);
         border-radius: 10px;
         background: rgba(15,23,42,.72);
@@ -1688,6 +1711,7 @@
       #${PANEL_ID} .nlh-card.top {
         border-color: rgba(96,165,250,.42);
         background: rgba(30,64,175,.18);
+        padding: 9px 10px;
       }
 
       #${PANEL_ID} .nlh-card-title {
@@ -1699,6 +1723,42 @@
         color: #aab3c2;
         font-size: 12px;
         line-height: 1.35;
+      }
+
+      #${PANEL_ID} .nlh-clamp {
+        display: -webkit-box;
+        -webkit-line-clamp: 2;
+        -webkit-box-orient: vertical;
+        overflow: hidden;
+      }
+
+      #${PANEL_ID} .nlh-dashboard {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 5px;
+      }
+
+      #${PANEL_ID} .nlh-dash-item {
+        min-width: 0;
+        padding: 5px 6px;
+        border: 1px solid rgba(148,163,184,.16);
+        border-radius: 8px;
+        background: rgba(15,23,42,.58);
+      }
+
+      #${PANEL_ID} .nlh-dash-label {
+        color: #94a3b8;
+        font-size: 10px;
+        text-transform: uppercase;
+        letter-spacing: .04em;
+      }
+
+      #${PANEL_ID} .nlh-dash-value {
+        font-size: 12px;
+        font-weight: 750;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
       }
 
       #${PANEL_ID} .nlh-row {
@@ -1758,18 +1818,18 @@
       }
 
       #${PANEL_ID} .nlh-small {
-        font-size: 11px;
+        font-size: 10px;
       }
 
       #${PANEL_ID} .nlh-pill {
         display: inline-block;
-        padding: 2px 6px;
+        padding: 1px 5px;
         border-radius: 999px;
         background: rgba(96,165,250,.13);
         border: 1px solid rgba(96,165,250,.25);
         color: #bfdbfe;
-        font-size: 11px;
-        margin: 2px 4px 2px 0;
+        font-size: 10px;
+        margin: 1px 3px 1px 0;
       }
 
       #${PANEL_ID} .nlh-pill.good {
@@ -1803,7 +1863,65 @@
       }
 
       #${PANEL_ID} .nlh-missing {
-        margin-top: 5px;
+        margin-top: 4px;
+      }
+
+      #${PANEL_ID} .nlh-section-toggle {
+        width: 100%;
+        display: grid;
+        grid-template-columns: auto 1fr auto;
+        gap: 7px;
+        align-items: center;
+        text-align: left;
+        padding: 6px 7px;
+        margin-bottom: 5px;
+        background: rgba(15,23,42,.64);
+        border-color: rgba(148,163,184,.20);
+        color: #dbeafe;
+      }
+
+      #${PANEL_ID} .nlh-section-chevron {
+        color: #93c5fd;
+        font-size: 11px;
+      }
+
+      #${PANEL_ID} .nlh-section-name {
+        color: #93c5fd;
+        font-size: 11px;
+        font-weight: 750;
+        text-transform: uppercase;
+        letter-spacing: .06em;
+      }
+
+      #${PANEL_ID} .nlh-section-badge {
+        justify-self: end;
+      }
+
+      #${PANEL_ID} .nlh-collapsible.closed .nlh-section-body,
+      #${PANEL_ID}.compact .nlh-details {
+        display: none;
+      }
+
+      #${PANEL_ID} .nlh-collapsible.muted .nlh-section-toggle {
+        opacity: .82;
+      }
+
+      #${PANEL_ID} .nlh-collapsible.danger .nlh-section-toggle {
+        border-color: rgba(248,113,113,.32);
+      }
+
+      #${PANEL_ID} .nlh-resource-table {
+        display: grid;
+        gap: 1px;
+      }
+
+      #${PANEL_ID} .nlh-resource-row {
+        display: grid;
+        grid-template-columns: minmax(95px, 1fr) 72px 92px;
+        gap: 8px;
+        align-items: center;
+        padding: 4px 0;
+        border-bottom: 1px solid rgba(148,163,184,.10);
       }
 
       #${PANEL_ID} .nlh-building-advisor .nlh-card-title {
@@ -1845,6 +1963,13 @@
 
     panel.querySelector('.nlh-refresh').addEventListener('click', render);
 
+    panel.querySelector('.nlh-compact-toggle').addEventListener('click', () => {
+      settings.compactMode = !settings.compactMode;
+      saveJson(SETTINGS_KEY, settings);
+      applyCompactMode();
+      render();
+    });
+
     panel.querySelector('.nlh-toggle').addEventListener('click', () => {
       settings.collapsed = !settings.collapsed;
       saveJson(SETTINGS_KEY, settings);
@@ -1857,6 +1982,7 @@
     });
 
     applyCollapsed();
+    applyCompactMode();
   }
 
   function applyCollapsed() {
@@ -1927,6 +2053,55 @@
     `;
   }
 
+  function applyCompactMode() {
+    const panel = document.getElementById(PANEL_ID);
+
+    if (!panel) return;
+
+    panel.classList.toggle('compact', !!settings.compactMode);
+
+    const button = panel.querySelector('.nlh-compact-toggle');
+
+    if (button) {
+      button.textContent = settings.compactMode ? 'Details' : 'Compact';
+    }
+  }
+
+  function setSectionOpen(sectionId, open) {
+    settings.sectionOpen = settings.sectionOpen || {};
+    settings.sectionOpen[sectionId] = !!open;
+    saveJson(SETTINGS_KEY, settings);
+  }
+
+  function getSectionOpen(id, defaultOpen) {
+    if (!settings.sectionOpen) settings.sectionOpen = {};
+    if (settings.sectionOpen[id] == null) settings.sectionOpen[id] = !!defaultOpen;
+    return !!settings.sectionOpen[id];
+  }
+
+  function renderCollapsibleSection(id, title, html, options = {}) {
+    const open = getSectionOpen(id, options.defaultOpen);
+    const classes = [
+      'nlh-section',
+      'nlh-collapsible',
+      open ? 'open' : 'closed',
+      options.muted ? 'muted' : '',
+      options.danger ? 'danger' : ''
+    ].filter(Boolean).join(' ');
+    const badge = options.badge ? `<span class="nlh-section-badge">${options.badge}</span>` : '<span></span>';
+
+    return `
+      <div class="${classes}" data-section="${esc(id)}">
+        <button class="nlh-section-toggle" type="button" data-section-toggle="${esc(id)}">
+          <span class="nlh-section-chevron">${open ? 'v' : '>'}</span>
+          <span class="nlh-section-name">${esc(title)}</span>
+          ${badge}
+        </button>
+        <div class="nlh-section-body">${html}</div>
+      </div>
+    `;
+  }
+
   function renderGoal(goalState, cacheHint) {
     return `
       <div class="nlh-card top">
@@ -1953,6 +2128,228 @@
     if (/hoch|jetzt|erledigt|ja/i.test(value)) return 'good';
     if (/blockiert|nein/i.test(value)) return 'danger';
     return 'warn';
+  }
+
+  function renderMissingPills(missing, limit = 2) {
+    if (!missing?.length) return '';
+
+    const visible = missing.slice(0, limit).map(item => `
+      <span class="nlh-pill warn">fehlt ${esc(item.name)} ${fmtNum(item.deficit)} Â· ${fmtTime(item.waitHours)}</span>
+    `).join('');
+    const more = missing.length > limit ? `<span class="nlh-pill warn">+${missing.length - limit} mehr</span>` : '';
+
+    return `<div class="nlh-missing">${visible}${more}</div>`;
+  }
+
+  function renderTopNextAction(planner) {
+    return `
+      <div class="nlh-card top">
+        <div class="nlh-card-title">${esc(planner.primaryAction || 'Daten vervollstÃ¤ndigen')}</div>
+        <div>
+          <span class="nlh-pill ${pillClass(planner.primaryStatus)}">${esc(planner.primaryStatus)}</span>
+          <span class="nlh-pill ${pillClass(planner.confidence)}">Confidence: ${esc(planner.confidence)}</span>
+          ${planner.affordability?.known ? `<span class="nlh-pill ${planner.affordability.affordable ? 'good' : 'warn'}">Wartezeit: ${esc(planner.affordability.waitText)}</span>` : ''}
+        </div>
+        <div class="nlh-reason nlh-clamp">${esc(planner.explanation)}</div>
+        ${renderMissingPills(planner.affordability?.missing, 2)}
+      </div>
+    `;
+  }
+
+  function renderCompactBuilding(advisor) {
+    const item = advisor.recommended;
+
+    if (!item) return '<div class="nlh-card"><div class="nlh-muted">NÃ¤chstes GebÃ¤ude: Buildings Cache fehlt.</div></div>';
+
+    const stateClass =
+      item.actionState === 'jetzt mÃ¶glich' || item.actionState === 'startbar'
+        ? 'good'
+        : item.actionState === 'blockiert'
+          ? 'danger'
+          : 'warn';
+    const title = item.href
+      ? `<a class="nlh-link" href="${esc(item.href)}">${esc(item.name)}</a>`
+      : esc(item.name);
+
+    return `
+      <div class="nlh-card">
+        <div class="nlh-card-title">NÃ¤chstes GebÃ¤ude: ${title}</div>
+        <div>
+          <span class="nlh-pill">Lv.${esc(item.level)} -> ${esc(item.targetLevel)}</span>
+          <span class="nlh-pill ${stateClass}">${esc(item.actionState)}</span>
+          ${item.affordability?.known ? `<span class="nlh-pill ${item.affordability.affordable ? 'good' : 'warn'}">${esc(item.affordability.waitText)}</span>` : '<span class="nlh-pill warn">Kosten fehlen</span>'}
+        </div>
+      </div>
+    `;
+  }
+
+  function renderCompactGoal(goalState, cacheHint) {
+    const progress = String(goalState.status || '').match(/(\d+)\s*\/\s*(\d+)/);
+
+    return `
+      <div class="nlh-card">
+        <div class="nlh-card-title">Hauptziel: ${esc(goalState.title)}</div>
+        <div>
+          <span class="nlh-pill">${esc(goalState.status)}</span>
+          ${progress ? `<span class="nlh-pill">${esc(progress[1])}/${esc(progress[2])}</span>` : ''}
+          ${cacheHint ? `<span class="nlh-pill warn">${esc(cacheHint)}</span>` : ''}
+        </div>
+        <div class="nlh-reason nlh-clamp">NÃ¤chster Schritt: ${esc(goalState.nextStep)}</div>
+      </div>
+    `;
+  }
+
+  function renderCompactWarnings(warningList, limit = 2) {
+    const sorted = [...warningList].sort((a, b) => (a.type === 'danger' ? 0 : 1) - (b.type === 'danger' ? 0 : 1));
+    const visible = sorted.slice(0, limit);
+
+    if (!visible.length) return '<div class="nlh-card"><div class="nlh-good">Keine akuten Warnungen erkannt.</div></div>';
+
+    return `
+      ${visible.map(warning => `
+        <div class="nlh-alert ${warning.type === 'danger' ? 'danger' : ''}">
+          <div class="${warning.type === 'danger' ? 'nlh-danger' : 'nlh-warn'}">${esc(warning.title)}</div>
+          <div class="nlh-reason nlh-clamp">${esc(warning.text)}</div>
+        </div>
+      `).join('')}
+      ${sorted.length > limit ? `<div class="nlh-footer-note">+${sorted.length - limit} weitere Warnungen in Details</div>` : ''}
+    `;
+  }
+
+  function renderTopSummary(nextActionPlanner, buildingAdvisor, goalState, warningList, cacheHint) {
+    return `
+      <div class="nlh-section">
+        <div class="nlh-section-title">Aktuell wichtig</div>
+        ${renderTopNextAction(nextActionPlanner)}
+        ${renderCompactBuilding(buildingAdvisor)}
+        ${renderCompactGoal(goalState, cacheHint)}
+        ${renderCompactWarnings(warningList, 2)}
+      </div>
+    `;
+  }
+
+  function renderCompactDashboard(currentStatus, fleet, dataQuality, resources) {
+    const researchCached = dataQuality.cachedBranches.filter(branch => branch.cached).length;
+    const energy = getEnergy(resources);
+    const items = [
+      ['Lab', currentStatus.lab ? `Lv.${currentStatus.lab}` : '?'],
+      ['Fleet', fleet.max != null ? `${fleet.active}/${fleet.max}` : '?'],
+      ['Mining', dataQuality.miningDetected ? 'Ja' : 'Nein'],
+      ['Energie frei', energy && Number.isFinite(energy.free) ? fmtNum(energy.free) : '?'],
+      ['Research Cache', `${researchCached}/${dataQuality.cachedBranches.length}`],
+      ['Buildings Cache', dataQuality.buildingsCached ? 'Ja' : 'Nein']
+    ];
+
+    return `
+      <div class="nlh-section">
+        <div class="nlh-section-title">Compact Dashboard</div>
+        <div class="nlh-dashboard">
+          ${items.map(([label, value]) => `
+            <div class="nlh-dash-item">
+              <div class="nlh-dash-label">${esc(label)}</div>
+              <div class="nlh-dash-value">${esc(value)}</div>
+            </div>
+          `).join('')}
+        </div>
+        <div class="nlh-footer-note">Cache: Research ${researchCached}/${dataQuality.cachedBranches.length} Â· Buildings ${dataQuality.buildingsCached ? 'ok' : 'fehlt'} Â· Fleet ${dataQuality.fleetCached ? 'ok' : 'fehlt'}</div>
+      </div>
+    `;
+  }
+
+  function renderBuildingOrder(advisor) {
+    const phaseLabel = {
+      anomaly_rush: 'Anomaly Rush',
+      sentinel_setup: 'Sentinel Setup',
+      economy_stabilize: 'Economy Stabilize'
+    }[advisor.phase] || advisor.phase;
+
+    if (!advisor.queue.length) {
+      return `
+        <div>
+          <span class="nlh-pill warn">Phase: ${esc(phaseLabel)}</span>
+        </div>
+        <div class="nlh-card"><div class="nlh-muted">Keine GebÃ¤udedaten erkannt. Ã–ffne einmal /buildings.</div></div>
+      `;
+    }
+
+    return `
+      <div>
+        <span class="nlh-pill warn">Phase: ${esc(phaseLabel)}</span>
+      </div>
+      <div class="nlh-card">
+        <div class="nlh-priority-list">
+          ${advisor.queue.map((building, index) => `
+            <div class="nlh-priority-row">
+              <div class="nlh-muted">${index + 1}.</div>
+              <div>
+                <strong>${esc(building.name)} Lv${esc(building.targetLevel)}</strong>
+                <div class="nlh-muted nlh-small nlh-clamp">${esc(building.reason)}</div>
+              </div>
+              <div><span class="nlh-pill ${building.actionState === 'jetzt mÃ¶glich' ? 'good' : building.actionState === 'blockiert' ? 'danger' : 'warn'}">${esc(building.actionState)}</span></div>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+      ${advisor.notes.map(note => `<div class="nlh-footer-note">${esc(note)}</div>`).join('')}
+    `;
+  }
+
+  function renderWarningsList(warningList) {
+    return warningList.length
+      ? warningList.map(warning => `
+          <div class="nlh-alert ${warning.type === 'danger' ? 'danger' : ''}">
+            <div class="${warning.type === 'danger' ? 'nlh-danger' : 'nlh-warn'}">${esc(warning.title)}</div>
+            <div class="nlh-reason">${esc(warning.text)}</div>
+          </div>
+        `).join('')
+      : '<div class="nlh-card"><div class="nlh-good">Keine akuten Warnungen erkannt.</div></div>';
+  }
+
+  function renderTopPriorities(actionList, immediate, waiting, warningList) {
+    return `
+      <div class="nlh-section">
+        <div class="nlh-card-title">Warnungen</div>
+        ${renderWarningsList(warningList)}
+      </div>
+      <div class="nlh-section">
+        <div class="nlh-card-title">Jetzt sinnvoll</div>
+        ${
+          immediate.length
+            ? immediate.slice(0, 5).map((action, index) => renderCard(action, index, index === 0)).join('')
+            : '<div class="nlh-muted">Keine sofort startbare Guide-Aktion sichtbar.</div>'
+        }
+      </div>
+      <div class="nlh-section">
+        <div class="nlh-card-title">Warten bis bezahlbar</div>
+        ${
+          waiting.length
+            ? waiting.map((action, index) => renderCard(action, index, false)).join('')
+            : '<div class="nlh-muted">Keine Wartezeit-Ziele mit sichtbaren Kosten erkannt.</div>'
+        }
+      </div>
+      ${
+        actionList.length
+          ? actionList.slice(0, 8).map((action, index) => renderCard(action, index, index === 0)).join('')
+          : '<div class="nlh-card"><div class="nlh-muted">Keine Aktionen erkannt.</div></div>'
+      }
+    `;
+  }
+
+  function renderCompactResources(resources) {
+    const rows = ['Ore', 'Silicates', 'Hydrogen', 'Alloys', 'Energy', 'Population', 'Bio-Extract']
+      .map(name => getRes(resources, name))
+      .filter(Boolean)
+      .map(resource => `
+        <div class="nlh-resource-row">
+          <strong>${esc(resource.name)}</strong>
+          <span class="${String(resource.net || resource.rate).startsWith('+') ? 'nlh-good' : 'nlh-muted'}">${esc(resource.net || resource.rate || '-')}</span>
+          <span class="${soonFull(resource.storageFullIn) ? 'nlh-warn' : 'nlh-muted'}">${esc(resource.storageFullIn || '-')}</span>
+        </div>
+      `).join('');
+
+    return rows
+      ? `<div class="nlh-card"><div class="nlh-resource-table">${rows}</div></div>`
+      : '<div class="nlh-muted">Keine Ressourcen erkannt.</div>';
   }
 
   function renderNextAction(planner) {
@@ -2025,22 +2422,15 @@
   }
 
   function renderOnboarding(dataQuality) {
-    const needs = [];
+    const cachedResearch = dataQuality.cachedBranches.filter(branch => branch.cached).length;
 
-    if (!dataQuality.buildingsCached) needs.push('Buildings');
-    if (!dataQuality.fleetCached) needs.push('Fleet', 'Mining');
-    for (const branch of dataQuality.cachedBranches) {
-      if (!branch.cached) needs.push(`Research ${branch.label}`);
-    }
-    if (!document.querySelector('.resource-bar .resource-item')) needs.push('Overview');
-
-    if (needs.length <= 1) return '';
+    if (dataQuality.fleetCached || dataQuality.buildingsCached || cachedResearch >= 2) return '';
 
     return `
       <div class="nlh-section">
-        <div class="nlh-card top">
+        <div class="nlh-card">
           <div class="nlh-card-title">Für bessere Empfehlungen einmal öffnen:</div>
-          <div class="nlh-missing">${[...new Set(['Overview', ...needs])].map(item => `<span class="nlh-pill warn">${esc(item)}</span>`).join('')}</div>
+          <div class="nlh-reason">Fleet, Buildings, Research Science/Economy/Military</div>
         </div>
       </div>
     `;
@@ -2265,7 +2655,7 @@
         </div>
       `).join('');
 
-    panel.querySelector('.nlh-body').innerHTML = `
+    const legacyLayout = `
       ${renderOnboarding(dataQuality)}
 
       <div class="nlh-section">
@@ -2363,6 +2753,72 @@
       </div>
     `;
 
+    panel.querySelector('.nlh-body').innerHTML = `
+      ${renderOnboarding(dataQuality)}
+      ${renderTopSummary(nextActionPlanner, buildingAdvisor, goalState, warningList, cacheHint)}
+      ${renderCompactDashboard(currentStatus, fleet, dataQuality, resources)}
+
+      <div class="nlh-details">
+        ${renderCollapsibleSection('research-plan', 'Research Plan', renderResearchPlan(researchPlan), {
+          defaultOpen: true,
+          badge: `<span class="nlh-pill ${researchPlan.startable ? 'good' : researchPlan.blocked ? 'danger' : 'warn'}">${esc(researchPlan.progress.done)}/${esc(researchPlan.progress.total)}</span>`
+        })}
+        ${renderCollapsibleSection('building-order', 'GebÃ¤ude-Reihenfolge', renderBuildingOrder(buildingAdvisor), {
+          defaultOpen: true,
+          badge: buildingAdvisor.recommended ? `<span class="nlh-pill ${buildingAdvisor.recommended.actionState === 'jetzt mÃ¶glich' ? 'good' : 'warn'}">${esc(buildingAdvisor.recommended.actionState)}</span>` : '<span class="nlh-pill warn">fehlt</span>'
+        })}
+        ${renderCollapsibleSection('session-plan', 'Session Plan', renderSessionPlan(sessionPlan), {
+          defaultOpen: false,
+          badge: `<span class="nlh-pill">${sessionPlan.now.length}</span>`
+        })}
+        ${renderCollapsibleSection('checklist', 'Guide-Checkliste', renderChecklist(checklist), {
+          defaultOpen: false,
+          badge: `<span class="nlh-pill">${checklist.filter(item => item.tone === 'good').length}/${checklist.length}</span>`
+        })}
+        ${renderCollapsibleSection('resources', 'Ressourcen', renderCompactResources(resources), {
+          defaultOpen: false,
+          muted: true
+        })}
+        ${renderCollapsibleSection('data-debug', 'Datenstatus / Debug', renderDataQuality(dataQuality), {
+          defaultOpen: false,
+          muted: true
+        })}
+        ${renderCollapsibleSection('priorities', 'Top-PrioritÃ¤ten', renderTopPriorities(actionList, immediate, waiting, warningList), {
+          defaultOpen: false,
+          badge: `<span class="nlh-pill">${actionList.length}</span>`,
+          danger: warningList.some(warning => warning.type === 'danger')
+        })}
+        ${renderCollapsibleSection('guide-path', 'Guide-Pfad', `
+          <div class="nlh-card">
+            ${GUIDE_TECH_ORDER.map(item => `<span class="nlh-pill">${esc(item)}</span>`).join('')}
+          </div>
+        `, {
+          defaultOpen: false,
+          muted: true
+        })}
+      </div>
+
+      <div class="nlh-footer-note">
+        Nur Overlay/Rechner. Keine Klicks, keine Requests, keine Automatisierung.
+      </div>
+    `;
+
+    panel.querySelectorAll('[data-section-toggle]').forEach(button => {
+      button.addEventListener('click', () => {
+        const id = button.getAttribute('data-section-toggle');
+        const section = button.closest('.nlh-collapsible');
+
+        if (!id || !section) return;
+
+        const open = section.classList.contains('closed');
+        setSectionOpen(id, open);
+        section.classList.toggle('closed', !open);
+        section.classList.toggle('open', open);
+        section.querySelector('.nlh-section-chevron').textContent = open ? 'v' : '>';
+      });
+    });
+
+    applyCompactMode();
     panel.querySelector('.nlh-debug-copy')?.addEventListener('click', copyDebugData);
   }
 
