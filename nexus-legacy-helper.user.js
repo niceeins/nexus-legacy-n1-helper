@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nexus Legacy Helper
 // @namespace    https://niceeins.local/
-// @version      0.7.6
+// @version      0.7.7
 // @description  Passive guide-based helper for Nexus Legacy: resources, build/research hints, affordability, wait times, research/fleet cache. No automation.
 // @match        https://*.nexuslegacy.space/*
 // @match        https://nexuslegacy.space/*
@@ -173,7 +173,7 @@
   function captureDomDump() {
     const key = location.pathname + location.search;
     const dump = {
-      version: '0.7.6',
+      version: '0.7.7',
       capturedAt: new Date().toISOString(),
       path: key,
       title: document.title,
@@ -203,7 +203,7 @@
 
   function getDomDumpPayload() {
     return {
-      version: '0.7.6',
+      version: '0.7.7',
       exportedAt: new Date().toISOString(),
       pages: getAllDomDumps()
     };
@@ -310,15 +310,8 @@
         continue;
       }
 
-      const oldWeight =
-        (old.fromCache ? 0 : 20) +
-        (old.isStartable ? 10 : 0) -
-        (old.isBlocked ? 4 : 0);
-
-      const newWeight =
-        (item.fromCache ? 0 : 20) +
-        (item.isStartable ? 10 : 0) -
-        (item.isBlocked ? 4 : 0);
+      const oldWeight = buildingMergeWeight(old);
+      const newWeight = buildingMergeWeight(item);
 
       if (newWeight >= oldWeight) {
         map.set(key, { ...old, ...item });
@@ -326,6 +319,20 @@
     }
 
     return [...map.values()];
+  }
+
+  function buildingMergeWeight(item) {
+    return (
+      (item.fromCache ? 0 : 20) +
+      (item.source === 'buildings' ? 50 : 0) +
+      (item.source === 'overview' ? 0 : 5) +
+      (item.costs?.length ? 18 : 0) +
+      (item.buttonText ? 12 : 0) +
+      (item.isUpgrading ? 25 : 0) +
+      (item.nextLevel ? 6 : 0) +
+      (item.isStartable ? 10 : 0) -
+      (item.isBlocked ? 4 : 0)
+    );
   }
 
   function parseSmallFraction(text) {
@@ -572,7 +579,13 @@
     const snapshots = getSnapshots();
 
     if (current.length) {
-      snapshots.buildings = current.map(item => ({ ...item, fromCache: true }));
+      const cachedCurrent = current.map(item => ({ ...item, fromCache: true }));
+      const hasDetailedCurrent = current.some(item => item.source === 'buildings');
+
+      snapshots.buildings = hasDetailedCurrent
+        ? cachedCurrent
+        : mergeByName([...(snapshots.buildings || []), ...cachedCurrent]);
+
       saveSnapshots(snapshots);
     }
 
@@ -1204,7 +1217,7 @@
     const domDumpPages = Object.keys(getAllDomDumps()).sort();
 
     return {
-      version: '0.7.6',
+      version: '0.7.7',
       path: location.pathname + location.search,
       cachedBranches,
       domDumpPages,
@@ -1724,7 +1737,7 @@
       <div class="nlh-header">
         <div class="nlh-title">
           <strong>Nexus Helper</strong>
-          <span class="nlh-version">v0.7.6</span>
+          <span class="nlh-version">v0.7.7</span>
         </div>
         <div class="nlh-rail-status"></div>
         <div class="nlh-actions">

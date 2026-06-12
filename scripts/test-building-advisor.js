@@ -9,8 +9,8 @@ function includes(text, message) {
   assert(source.includes(text), message || `Expected source to include ${text}`);
 }
 
-includes('@version      0.7.6', 'userscript header version should be 0.7.6');
-includes('<span class="nlh-version">v0.7.6</span>', 'panel version should be v0.7.6');
+includes('@version      0.7.7', 'userscript header version should be 0.7.7');
+includes('<span class="nlh-version">v0.7.7</span>', 'panel version should be v0.7.7');
 
 [
   'function getBuildingAdvisor(resources, buildings, researchItems, fleetState)',
@@ -56,6 +56,11 @@ includes('<span class="nlh-version">v0.7.6</span>', 'panel version should be v0.
   'item.isUpgrading',
   "actionState = 'läuft'",
   'building.isUpgrading',
+  'function buildingMergeWeight(item)',
+  "item.source === 'buildings'",
+  "item.source === 'overview'",
+  'const hasDetailedCurrent',
+  'snapshots.buildings = hasDetailedCurrent',
   'unknownDataHints',
   'idleRisks',
   'skippedLowPriority',
@@ -135,4 +140,4 @@ includes('function renderRailStatus(resources, warningList)', 'collapsed rail sh
 includes('class="nlh-rail-status"', 'collapsed rail should have a visible status container');
 includes('⚠', 'collapsed rail should show an alert marker when important warnings exist');
 
-console.log('v0.7.6 planner source checks passed');
+console.log('v0.7.7 planner source checks passed');

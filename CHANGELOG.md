@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.7
+
+- Preserve detailed building cache data when visiting Overview so active upgrades and costs are not lost.
+- Prefer richer building records during merge, especially `/buildings` entries with button/status data.
+
 ## 0.7.6
 
 - Fixed fleet slot parsing when Nexus renders `1 / 3active` without spacing.
