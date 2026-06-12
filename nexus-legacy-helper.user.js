@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nexus Legacy Helper
 // @namespace    https://niceeins.local/
-// @version      0.5.0
+// @version      0.6.0
 // @description  Passive guide-based helper for Nexus Legacy: resources, build/research hints, affordability, wait times, research/fleet cache. No automation.
 // @match        https://*.nexuslegacy.space/*
 // @match        https://nexuslegacy.space/*
@@ -947,6 +947,274 @@
       .slice(0, 14);
   }
 
+  function getBuildingAdvisor(resources, buildings, researchItems, fleetState) {
+    const energy = getEnergy(resources) || {};
+    const ore = getRes(resources, 'Ore') || {};
+    const silicates = getRes(resources, 'Silicates') || {};
+    const hydrogen = getRes(resources, 'Hydrogen') || {};
+    const alloys = getRes(resources, 'Alloys') || {};
+    const population = getRes(resources, 'Population') || {};
+    const anomaly = researchState(researchItems, 'Anomaly Scanning');
+    const candidates = buildings.filter(building => building.kind === 'building' && building.name);
+
+    const context = {
+      resources,
+      buildings,
+      researchItems,
+      fleetState,
+      labLevel: labLevel(buildings) || 0,
+      energyFree: Number.isFinite(energy.free) ? energy.free : Infinity,
+      energyRatio: Number.isFinite(energy.ratio) ? energy.ratio : 0,
+      oreMineLevel: buildingLevel(buildings, 'Ore Mine'),
+      silicateMineLevel: buildingLevel(buildings, 'Silicate Mine'),
+      hydrogenProcessorLevel: buildingLevel(buildings, 'Hydrogen Processor'),
+      alloyFoundryLevel: buildingLevel(buildings, 'Alloy Foundry'),
+      researchLabLevel: buildingLevel(buildings, 'Research Lab'),
+      residentialComplexLevel: buildingLevel(buildings, 'Residential Complex'),
+      bioComplexLevel: buildingLevel(buildings, 'Bio Complex'),
+      storageComplexLevel: buildingLevel(buildings, 'Storage Complex'),
+      constructionYardLevel: buildingLevel(buildings, 'Construction Yard'),
+      population: {
+        amount: population.amount,
+        capacity: population.capacity
+      },
+      ore: {
+        amount: ore.amount,
+        net: ore.net,
+        netNumber: ore.netNumber
+      },
+      silicates: {
+        amount: silicates.amount,
+        net: silicates.net,
+        netNumber: silicates.netNumber
+      },
+      hydrogen: {
+        amount: hydrogen.amount,
+        net: hydrogen.net,
+        netNumber: hydrogen.netNumber
+      },
+      alloys: {
+        amount: alloys.amount,
+        net: alloys.net,
+        netNumber: alloys.netNumber
+      },
+      currentGoal: anomaly.done ? 'sentinel_setup' : 'anomaly_scanning',
+      hasMining: !!fleetState.hasMining,
+      anomalyScanningDone: anomaly.done,
+      anomalyScanningSeen: !!anomaly.item,
+      anyStorageSoonFull: resources.some(resource => resource.name !== 'Energy' && soonFull(resource.storageFullIn))
+    };
+
+    context.phase = getBuildingPhase(context);
+
+    const queue = candidates
+      .map(building => {
+        const aff = affordability(building, resources);
+        let actionState = 'unbekannt';
+
+        if (building.isBlocked) {
+          actionState = 'blockiert';
+        } else if (aff.affordable === true && building.isStartable) {
+          actionState = 'jetzt möglich';
+        } else if (aff.affordable === false) {
+          actionState = `wartet: ${aff.waitText}`;
+        } else if (building.isStartable) {
+          actionState = 'startbar';
+        } else if (building.fromCache) {
+          actionState = 'aus Cache';
+        }
+
+        return {
+          ...building,
+          score: scoreBuildingCandidate(building, context),
+          reason: getBuildingAdvisorReason(building, context),
+          warnings: getBuildingAdvisorWarnings(building, context),
+          affordability: aff,
+          actionState,
+          targetLevel: getBuildingAdvisorTargetLevel(building, context),
+          source: `${GUIDE}: Gebäudeberater`
+        };
+      })
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 5);
+
+    const notes = [];
+
+    if (!candidates.length) {
+      notes.push('Keine Gebäudedaten erkannt. Öffne einmal /buildings.');
+    } else if (!candidates.some(building => building.costs?.length)) {
+      notes.push('Gebäudekosten nicht sichtbar. Öffne /buildings für genaue Wartezeiten.');
+      notes.push('Buildings-Seite einmal öffnen, damit der Gebäudeberater Kosten und Level kennt.');
+    } else if (candidates.some(building => building.source === 'overview' && !building.costs?.length)) {
+      notes.push('Gebäudekosten nicht sichtbar. Öffne /buildings für genaue Wartezeiten.');
+    }
+
+    if (!fleetState.hasMining) {
+      notes.push('Mining ist nicht sicher erkannt; Fleet-/Mining-Seite gelegentlich öffnen.');
+    }
+
+    return {
+      recommended: queue[0] || null,
+      queue,
+      phase: context.phase,
+      notes
+    };
+  }
+
+  function scoreBuildingCandidate(building, context) {
+    const name = norm(building.name);
+    const aff = affordability(building, context.resources);
+    const energyFree = context.energyFree;
+    const energyRatio = context.energyRatio;
+    const energyCritical = energyFree < 40 || energyRatio >= 0.92;
+    let score = 100;
+
+    if (name === 'solar plant') {
+      score = energyCritical ? 1000 : 360;
+    } else if (name === 'research lab') {
+      score = context.researchLabLevel < 3 ? 920 : 260;
+      if (energyCritical) score -= 520;
+    } else if (name === 'silicate mine') {
+      score = context.oreMineLevel > context.silicateMineLevel + 1 ? 740 : 560;
+    } else if (name === 'ore mine') {
+      score = context.oreMineLevel <= context.silicateMineLevel ? 700 : 540;
+    } else if (name === 'hydrogen processor') {
+      score = 420;
+      if ((context.hydrogen.amount ?? Infinity) < 1000 && context.researchLabLevel < 3) score = 680;
+      if ((context.hydrogen.netNumber ?? Infinity) < 120) score = Math.max(score, 540);
+    } else if (name === 'alloy foundry') {
+      score = context.alloyFoundryLevel < 3 ? 430 : 210;
+      if (context.researchLabLevel < 3) score -= 110;
+      if ((context.alloys.amount ?? Infinity) < 500) score += 80;
+    } else if (name === 'residential complex') {
+      const ratio = context.population.capacity > 0
+        ? context.population.amount / context.population.capacity
+        : 0;
+      score = ratio >= 0.8 ? 620 : 260;
+    } else if (name === 'bio complex') {
+      score = 310;
+    } else if (name === 'medical bay') {
+      score = 95;
+    } else if (name === 'storage complex') {
+      score = context.anyStorageSoonFull ? 300 : 45;
+    } else if (name === 'construction yard') {
+      score = 40;
+    } else {
+      const guideIndex = GUIDE_BUILD_ORDER.findIndex(item => norm(item) === name);
+      score = guideIndex >= 0 ? 330 - guideIndex * 18 : 120;
+    }
+
+    if (aff.affordable === true) score += 60;
+    if (aff.affordable === false && aff.waitHours <= 1) score += 35;
+    if (aff.affordable === false && aff.waitHours > 6) score -= 120;
+    if (building.isStartable) score += 35;
+    if (building.isBlocked) score -= 90;
+    if (building.fromCache) score -= 8;
+
+    return score;
+  }
+
+  function getBuildingPhase(context) {
+    if (!context.anomalyScanningDone) {
+      return 'anomaly_rush';
+    }
+
+    if (!context.hasMining || !context.fleetState.max) {
+      return 'sentinel_setup';
+    }
+
+    if (
+      context.labLevel >= 3 &&
+      context.oreMineLevel >= 1 &&
+      context.silicateMineLevel >= 1 &&
+      context.hydrogenProcessorLevel >= 1
+    ) {
+      return 'economy_stabilize';
+    }
+
+    return 'sentinel_setup';
+  }
+
+  function getBuildingAdvisorReason(building, context) {
+    const name = norm(building.name);
+    const energyFree = context.energyFree;
+    const energyRatio = context.energyRatio;
+    const energyCritical = energyFree < 40 || energyRatio >= 0.92;
+
+    if (name === 'solar plant' && energyCritical) {
+      return 'Energie ist knapp. Ohne freie Energie blockieren weitere Produktionsgebäude.';
+    }
+
+    if (name === 'research lab' && context.researchLabLevel < 3 && !energyCritical) {
+      return 'Research Lab Lv3 ist zentral für den Anomaly-Scanning-Pfad.';
+    }
+
+    if (name === 'ore mine' || name === 'silicate mine') {
+      return 'Ore/Silicate sind die frühe industrielle Basis; Ore leicht priorisieren.';
+    }
+
+    if (name === 'hydrogen processor') {
+      return 'Hydrogen wird für Forschung und spätere Fleet-/Scout-Schritte gebraucht.';
+    }
+
+    if (name === 'alloy foundry') {
+      return 'Alloys werden ab Tag 2 wichtiger; Lv3 ist solides frühes Ziel.';
+    }
+
+    if (name === 'residential complex' || name === 'bio complex') {
+      return 'Population wird durch Workforce Management produktionsrelevant.';
+    }
+
+    if (name === 'medical bay') {
+      return 'Medical Bay ist sichtbar, aber früh wegen Energiebedarf keine Pflicht-Priorität.';
+    }
+
+    if (name === 'storage complex' || name === 'construction yard') {
+      return 'Guide sagt: Früh sind Ressourcen der Engpass, nicht Bauzeit/Storage.';
+    }
+
+    return 'Guide-basierte frühe Gebäudepriorität.';
+  }
+
+  function getBuildingAdvisorWarnings(building, context) {
+    const name = norm(building.name);
+    const warnings = [];
+
+    if ((name === 'storage complex' || name === 'construction yard') && context.phase === 'anomaly_rush') {
+      warnings.push('Früh niedrig priorisiert, solange kein konkreter Engpass sichtbar ist.');
+    }
+
+    if (name === 'medical bay') {
+      warnings.push('Energieintensiv; nur bei erkennbarem Population-Engpass vorziehen.');
+    }
+
+    if (name !== 'solar plant' && (context.energyFree < 40 || context.energyRatio >= 0.92)) {
+      warnings.push('Energie knapp; Solar Plant kann diese Empfehlung überholen.');
+    }
+
+    if (!building.costs?.length) {
+      warnings.push('Kosten nicht sichtbar; Wartezeit nur mit /buildings genau.');
+    }
+
+    if (building.fromCache) {
+      warnings.push('Aus Cache; aktuelle Seite kann abweichen.');
+    }
+
+    return warnings;
+  }
+
+  function getBuildingAdvisorTargetLevel(building, context) {
+    const name = norm(building.name);
+
+    if (name === 'research lab') return Math.max(3, building.level + 1);
+    if (name === 'alloy foundry') return Math.max(3, building.level + 1);
+    if (name === 'ore mine' || name === 'silicate mine') {
+      return Math.max(building.level + 1, Math.max(context.oreMineLevel, context.silicateMineLevel));
+    }
+
+    return building.nextLevel || building.level + 1;
+  }
+
   function warnings(resources, fleet) {
     const output = [];
     const energy = getEnergy(resources);
@@ -1006,7 +1274,7 @@
       <div class="nlh-header">
         <div>
           <strong>Nexus Helper</strong>
-          <span class="nlh-version">v0.5.0</span>
+          <span class="nlh-version">v0.6.0</span>
         </div>
         <div class="nlh-actions">
           <button class="nlh-toggle">−</button>
@@ -1232,6 +1500,25 @@
         margin-top: 5px;
       }
 
+      #${PANEL_ID} .nlh-building-advisor .nlh-card-title {
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+      }
+
+      #${PANEL_ID} .nlh-priority-list {
+        margin-top: 7px;
+      }
+
+      #${PANEL_ID} .nlh-priority-row {
+        display: grid;
+        grid-template-columns: 24px 1fr auto;
+        gap: 8px;
+        align-items: center;
+        padding: 5px 0;
+        border-top: 1px solid rgba(148,163,184,.10);
+      }
+
       @media(max-width:700px) {
         #${PANEL_ID} {
           left: 10px;
@@ -1356,6 +1643,96 @@
     `;
   }
 
+  function renderBuildingAdvisor(advisor) {
+    const phaseLabel = {
+      anomaly_rush: 'Anomaly Rush',
+      sentinel_setup: 'Sentinel Setup',
+      economy_stabilize: 'Economy Stabilize'
+    }[advisor.phase] || advisor.phase;
+
+    if (!advisor.recommended) {
+      return `
+        <div class="nlh-building-advisor">
+          <div>
+            <span class="nlh-pill warn">Phase: ${esc(phaseLabel)}</span>
+          </div>
+          <div class="nlh-card">
+            <div class="nlh-muted">Keine Gebäudedaten erkannt. Öffne einmal /buildings.</div>
+          </div>
+          ${advisor.notes.map(note => `<div class="nlh-footer-note">${esc(note)}</div>`).join('')}
+        </div>
+      `;
+    }
+
+    const item = advisor.recommended;
+    const stateClass =
+      item.actionState === 'jetzt möglich' || item.actionState === 'startbar'
+        ? 'good'
+        : item.actionState === 'blockiert'
+          ? 'danger'
+          : 'warn';
+
+    const missingHtml = item.affordability?.missing?.length
+      ? `
+        <div class="nlh-missing">
+          ${item.affordability.missing.map(missing => `
+            <span class="nlh-pill warn">
+              fehlt ${esc(missing.name)} ${fmtNum(missing.deficit)} · ${fmtTime(missing.waitHours)}
+            </span>
+          `).join('')}
+        </div>
+      `
+      : '';
+
+    const waitHtml = item.affordability?.known
+      ? `<span class="nlh-pill ${item.affordability.affordable ? 'good' : 'warn'}">Wartezeit: ${esc(item.affordability.waitText)}</span>`
+      : '<span class="nlh-pill warn">Kosten nicht sichtbar</span>';
+
+    const listHtml = advisor.queue.map((building, index) => `
+      <div class="nlh-priority-row">
+        <div class="nlh-muted">${index + 1}.</div>
+        <div>
+          <strong>${esc(building.name)} Lv${esc(building.targetLevel)}</strong>
+          <div class="nlh-muted nlh-small">${esc(building.reason)}</div>
+        </div>
+        <div><span class="nlh-pill ${building.actionState === 'jetzt möglich' ? 'good' : 'warn'}">${esc(building.actionState)}</span></div>
+      </div>
+    `).join('');
+
+    return `
+      <div class="nlh-building-advisor">
+        <div>
+          <span class="nlh-pill warn">Phase: ${esc(phaseLabel)}</span>
+        </div>
+        <div class="nlh-card top">
+          <div class="nlh-card-title">
+            <span>Nächstes Gebäude</span>
+            <span class="nlh-muted nlh-small">Score ${Math.round(item.score)}</span>
+          </div>
+          <div>
+            <strong>${esc(item.name)}</strong>
+            <span class="nlh-pill">Lv.${esc(item.level)} → ${esc(item.targetLevel)}</span>
+            <span class="nlh-pill ${stateClass}">${esc(item.actionState)}</span>
+            ${item.fromCache ? '<span class="nlh-pill warn">aus Cache</span>' : ''}
+            ${waitHtml}
+          </div>
+          <div class="nlh-reason">${esc(item.reason)}</div>
+          ${missingHtml}
+          ${
+            item.warnings.length
+              ? `<div class="nlh-missing">${item.warnings.map(warning => `<span class="nlh-pill warn">${esc(warning)}</span>`).join('')}</div>`
+              : ''
+          }
+        </div>
+        <div class="nlh-card">
+          <div class="nlh-card-title">Reihenfolge</div>
+          <div class="nlh-priority-list">${listHtml}</div>
+        </div>
+        ${advisor.notes.map(note => `<div class="nlh-footer-note">${esc(note)}</div>`).join('')}
+      </div>
+    `;
+  }
+
   function renderChecklist(checklist) {
     return `
       <div class="nlh-card">
@@ -1382,6 +1759,7 @@
     const fleet = fleetState();
     const currentStatus = status(buildings);
     const goalState = buildGoalState(resources, buildings, research, fleet);
+    const buildingAdvisor = getBuildingAdvisor(resources, buildings, research, fleet);
     const checklist = buildGuideChecklist(resources, buildings, research, fleet);
     const cacheHint = researchCacheHint();
     const actionList = actions(resources, buildings, research);
@@ -1444,6 +1822,11 @@
       <div class="nlh-section">
         <div class="nlh-section-title">Hauptziel</div>
         ${renderGoal(goalState, cacheHint)}
+      </div>
+
+      <div class="nlh-section">
+        <div class="nlh-section-title">Gebäudeberater</div>
+        ${renderBuildingAdvisor(buildingAdvisor)}
       </div>
 
       <div class="nlh-section">
