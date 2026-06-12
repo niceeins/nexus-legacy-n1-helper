@@ -22,6 +22,14 @@ includes('<span class="nlh-version">v0.6.0</span>', 'panel version should be v0.
 ].forEach(fn => includes(fn, `${fn} should exist`));
 
 [
+  'const isCompleted',
+  'isCompleted,',
+  'completed|complete|done|researched|finished|erledigt|abgeschlossen',
+  'item.isCompleted',
+  "state: 'erledigt'"
+].forEach(text => includes(text, `Expected completed research detection: ${text}`));
+
+[
   'Gebäudeberater',
   'Nächstes Gebäude',
   'Reihenfolge',

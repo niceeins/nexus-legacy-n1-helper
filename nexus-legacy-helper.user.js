@@ -473,6 +473,13 @@
       .map(button => button.textContent.trim())
       .join(' | ');
 
+    const isCompleted =
+      /completed|complete|done|researched|finished|erledigt|abgeschlossen/i.test(text) ||
+      card.classList.contains('completed') ||
+      card.classList.contains('complete') ||
+      card.classList.contains('researched') ||
+      card.classList.contains('done');
+
     return {
       kind: 'research',
       name: cleanName(name),
@@ -483,6 +490,7 @@
       timeText: card.querySelector('.research-time')?.textContent?.trim() || null,
       href: card.querySelector('.research-name-link')?.getAttribute('href') || '',
       buttonText,
+      isCompleted,
       isStartable: /Start Research|Level Up/i.test(buttonText) && !/Prerequisites missing|Missing|Locked/i.test(buttonText),
       isPlanned: /Added/i.test(buttonText),
       isBlocked: /Prerequisites missing|Missing|Locked/i.test(buttonText) || card.classList.contains('prereq-missing'),
@@ -634,7 +642,7 @@
       };
     }
 
-    if (item.level > 0) {
+    if (item.level > 0 || item.isCompleted) {
       return {
         name,
         item,
