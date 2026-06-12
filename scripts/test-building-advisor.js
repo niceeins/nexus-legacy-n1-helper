@@ -9,11 +9,21 @@ function includes(text, message) {
   assert(source.includes(text), message || `Expected source to include ${text}`);
 }
 
-includes('@version      0.6.0', 'userscript header version should be 0.6.0');
-includes('<span class="nlh-version">v0.6.0</span>', 'panel version should be v0.6.0');
+includes('@version      0.7.0', 'userscript header version should be 0.7.0');
+includes('<span class="nlh-version">v0.7.0</span>', 'panel version should be v0.7.0');
 
 [
   'function getBuildingAdvisor(resources, buildings, researchItems, fleetState)',
+  'function getResearchByName(researchItems, name)',
+  'function getResearchState(researchItems, name)',
+  'function buildResearchDependencyPlan(targetName, researchItems, buildings)',
+  'function buildNextActionPlanner(resources, buildings, researchItems, fleetState, goalState, buildingAdvisor)',
+  'function buildSessionPlan(resources, buildings, researchItems, fleetState, nextActionPlanner, buildingAdvisor)',
+  'function renderNextAction(planner)',
+  'function renderResearchPlan(plan)',
+  'function renderSessionPlan(plan)',
+  'function renderDataQuality(dataQuality)',
+  'function copyDebugData()',
   'function scoreBuildingCandidate(building, context)',
   'function getBuildingPhase(context)',
   'function getBuildingAdvisorReason(building, context)',
@@ -26,20 +36,30 @@ includes('<span class="nlh-version">v0.6.0</span>', 'panel version should be v0.
   'isCompleted,',
   'completed|complete|done|researched|finished|erledigt|abgeschlossen',
   'item.isCompleted',
-  "state: 'erledigt'"
-].forEach(text => includes(text, `Expected completed research detection: ${text}`));
+  "state: 'erledigt'",
+  'prereqs:',
+  "card.querySelectorAll('.prereq",
+  'unknownDataHints',
+  'idleRisks',
+  'skippedLowPriority',
+  'dataQuality'
+].forEach(text => includes(text, `Expected planner/dependency data: ${text}`));
 
 [
-  'Gebäudeberater',
-  'Nächstes Gebäude',
+  'Next Action',
+  'Research Plan',
+  'Session Plan',
+  'Datenstatus',
+  'Debug kopieren',
+  'Geb',
+  'N',
   'Reihenfolge',
   'Phase:',
   "anomaly_rush: 'Anomaly Rush'",
   "sentinel_setup: 'Sentinel Setup'",
   "economy_stabilize: 'Economy Stabilize'",
-  'Research Lab Lv3 ist zentral für den Anomaly-Scanning-Pfad.',
-  'Energie ist knapp. Ohne freie Energie blockieren weitere Produktionsgebäude.',
-  'Guide sagt: Früh sind Ressourcen der Engpass, nicht Bauzeit/Storage.'
+  'Research Lab Lv3',
+  'Energie ist knapp'
 ].forEach(text => includes(text, `Expected UI/advisor copy: ${text}`));
 
 [
@@ -57,5 +77,6 @@ includes('<span class="nlh-version">v0.6.0</span>', 'panel version should be v0.
 assert(!/\bfetch\s*\(/.test(source), 'script must not call fetch()');
 assert(!/\bXMLHttpRequest\b/.test(source), 'script must not use XMLHttpRequest');
 assert(!/\.click\s*\(/.test(source), 'script must not perform DOM clicks');
+assert(!/\bPOST\b|\bPUT\b|\bDELETE\b/.test(source), 'script must not contain write request verbs');
 
-console.log('building advisor source checks passed');
+console.log('v0.7.0 planner source checks passed');

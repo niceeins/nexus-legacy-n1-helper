@@ -5,6 +5,9 @@ Passive Tampermonkey helper overlay for **Nexus Legacy**.
 The helper reads the visible game page and shows guide-based recommendations for:
 
 - research priorities
+- next action planning
+- research dependency planning
+- 30/60/120 minute session planning
 - next building recommendations
 - resource bottlenecks
 - fleet/mining status
@@ -79,10 +82,16 @@ Current features include:
 - fleet/mining status
 - research cache across branches
 - building cache
+- local cache/debug export
 - guide-based early-game checklist
 - Anomaly Scanning goal mode
+- Next Action Planner
+- Research Dependency Resolver
+- 30/60/120 minute session plan
 - next building recommendation
 - building priority order
+- data quality/debug status
+- first-time onboarding hints
 - affordability and wait-time estimates
 
 ## Safety / Fair Play

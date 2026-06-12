@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.7.0
+
+- Added Next Action Planner
+- Added Research Dependency Resolver
+- Added 30/60/120 minute session plan
+- Improved building advisor scoring
+- Added data quality/debug section
+- Added local cache export/copy support
+- Improved onboarding hints for first-time users
+
 ## 0.6.0
 
 - Added building advisor

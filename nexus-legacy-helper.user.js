@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nexus Legacy Helper
 // @namespace    https://niceeins.local/
-// @version      0.6.0
+// @version      0.7.0
 // @description  Passive guide-based helper for Nexus Legacy: resources, build/research hints, affordability, wait times, research/fleet cache. No automation.
 // @match        https://*.nexuslegacy.space/*
 // @match        https://nexuslegacy.space/*
@@ -98,6 +98,7 @@
     return String(value || '')
       .replace(/Lv\.?\s*\d+.*$/i, '')
       .replace(/Level\s*\d+.*$/i, '')
+      .replace(/[✓✔🔒]/g, '')
       .replace(/→.*$/i, '')
       .replace(/\s+/g, ' ')
       .trim();
@@ -297,6 +298,37 @@
       .filter(Boolean);
   }
 
+  function parsePrereqs(card) {
+    return [...card.querySelectorAll('.prereq,.prerequisite,[class*="prereq"]')]
+      .map(node => {
+        const rawText = node.textContent || '';
+        const text = rawText
+          .replace(/[✓✔🔒]/g, '')
+          .replace(/\s+/g, ' ')
+          .trim();
+
+        if (!text) return null;
+
+        const classes = node.className || '';
+        const missing = /missing|locked|unmet|blocked|not-met|danger/i.test(classes) ||
+          /missing|required|locked|benötigt|fehlt/i.test(text) ||
+          rawText.includes('🔒');
+        const met = !missing && (
+          /met|done|complete|completed|ok|success/i.test(classes) ||
+          /done|complete|completed|erfüllt|erledigt/i.test(text) ||
+          rawText.includes('✓') ||
+          rawText.includes('✔')
+        );
+
+        return {
+          name: cleanName(text.replace(/^(requires?|prereq(?:uisite)?|benötigt|fehlt):?\s*/i, '')),
+          met,
+          missing
+        };
+      })
+      .filter(item => item?.name);
+  }
+
   function affordability(item, resources) {
     if (!item.costs?.length) {
       return {
@@ -486,6 +518,7 @@
       level: levelMatch ? parseInt(levelMatch[1], 10) : 0,
       maxLevel: levelMatch ? parseInt(levelMatch[2], 10) : null,
       labRequired: labMatch ? parseInt(labMatch[1], 10) : null,
+      prereqs: parsePrereqs(card),
       costs: parseCosts(card, '.research-costs'),
       timeText: card.querySelector('.research-time')?.textContent?.trim() || null,
       href: card.querySelector('.research-name-link')?.getAttribute('href') || '',
@@ -796,6 +829,261 @@
       : '';
   }
 
+  function getCachedBranches() {
+    const snapshots = getSnapshots();
+    const branches = snapshots.researchByBranch || {};
+
+    return ['science', 'economy', 'military'].map(key => ({
+      key,
+      label: key.charAt(0).toUpperCase() + key.slice(1),
+      cached: Array.isArray(branches[key]) && branches[key].length > 0
+    }));
+  }
+
+  function getResearchByName(researchItems, name) {
+    return researchItems.find(item => norm(item.name) === norm(name)) || null;
+  }
+
+  function getResearchState(researchItems, name) {
+    const item = getResearchByName(researchItems, name);
+
+    if (!item) {
+      return {
+        name,
+        item: null,
+        completed: false,
+        startable: false,
+        blocked: false,
+        state: 'Daten fehlen'
+      };
+    }
+
+    const completed = item.level > 0 || item.isCompleted;
+
+    return {
+      name,
+      item,
+      completed,
+      startable: !completed && !!item.isStartable,
+      blocked: !completed && !!item.isBlocked,
+      state: completed ? 'erledigt' : item.isStartable ? 'startbar' : item.isBlocked ? 'blockiert' : 'sichtbar'
+    };
+  }
+
+  function buildResearchDependencyPlan(targetName, researchItems, buildings) {
+    const target = getResearchState(researchItems, targetName);
+    const requiredNames = ['Basic Sensors', 'Structural Alloys', 'Orbital Mechanics', targetName];
+    const optionalNames = ['Probe Technology'];
+    const required = requiredNames.map(name => getResearchState(researchItems, name));
+    const optional = optionalNames.map(name => getResearchState(researchItems, name));
+    const lab = labLevel(buildings) || 0;
+    const labMet = lab >= 3;
+    const missing = [];
+    const unknownDataHints = [];
+    const cachedBranches = getCachedBranches();
+
+    for (const branch of cachedBranches) {
+      if (!branch.cached) unknownDataHints.push(`${branch.label} Research öffnen`);
+    }
+
+    if (!labMet) {
+      missing.push({ name: 'Research Lab Lv3', state: lab ? `Lab Lv.${lab}` : 'nicht gesehen', hard: true });
+    }
+
+    for (const state of required) {
+      if (!state.completed) missing.push({ name: state.name, state: state.state, hard: true });
+    }
+
+    for (const state of optional) {
+      if (!state.completed) missing.push({ name: state.name, state: state.state, hard: false });
+    }
+
+    const prereqMissing = target.item?.prereqs?.filter(prereq => prereq.missing) || [];
+    const nextResearch = required.find(state => state.startable) ||
+      optional.find(state => state.startable) ||
+      required.find(state => !state.completed && state.item) ||
+      optional.find(state => !state.completed && state.item) ||
+      null;
+
+    return {
+      target: targetName,
+      completed: target.completed,
+      startable: target.startable,
+      blocked: target.blocked || prereqMissing.length > 0 || !labMet,
+      missing,
+      nextResearch,
+      unknownDataHints,
+      cachedBranches,
+      progress: {
+        done: required.filter(state => state.completed).length + (labMet ? 1 : 0),
+        total: required.length + 1
+      },
+      prereqMissing
+    };
+  }
+
+  function getActionStatus(item) {
+    if (!item) return 'Daten fehlen';
+    if (item.actionState === 'jetzt mÃ¶glich' || item.actionState === 'startbar') return 'jetzt';
+    if (item.actionState === 'blockiert' || item.isBlocked) return 'blockiert';
+    if (item.actionState?.startsWith('wartet')) return 'wartet';
+    if (item.fromCache) return 'Daten fehlen';
+    return 'wartet';
+  }
+
+  function confidenceFromData(blockers, secondaryActions) {
+    const dataHints = [...blockers, ...secondaryActions].filter(item => /Daten|öffnen|Cache|Branch/i.test(item));
+    if (!dataHints.length) return 'Hoch';
+    if (dataHints.length <= 2) return 'Mittel';
+    return 'Niedrig';
+  }
+
+  function buildNextActionPlanner(resources, buildings, researchItems, fleetState, goalState, buildingAdvisor) {
+    const energy = getEnergy(resources);
+    const researchPlan = buildResearchDependencyPlan('Anomaly Scanning', researchItems, buildings);
+    const secondaryActions = [];
+    const blockers = [];
+    const lab = labLevel(buildings) || 0;
+    const actionList = actions(resources, buildings, researchItems);
+    const anomaly = getResearchState(researchItems, 'Anomaly Scanning');
+    const basicSensors = getResearchState(researchItems, 'Basic Sensors');
+    const solar = buildings.find(building => norm(building.name) === 'solar plant');
+    const labBuilding = buildings.find(building => norm(building.name) === 'research lab');
+    let primaryAction = null;
+    let primaryItem = null;
+    let explanation = 'Beste sichtbare Guide-Aktion aus Research-, Gebäude- und Fleet-Daten.';
+
+    for (const hint of researchPlan.unknownDataHints) secondaryActions.push(hint);
+
+    if (!buildings.length) blockers.push('Buildings-Seite öffnen, damit Level, Kosten und Wartezeiten sichtbar sind.');
+
+    if (!fleetState.hasMining && fleetState.max != null) {
+      secondaryActions.push('Mining prüfen, weil kein Mining erkannt wurde.');
+    } else if (!fleetState.hasMining) {
+      blockers.push('Fleet-/Mining-Seite öffnen, weil Mining-Daten fehlen.');
+    }
+
+    if (anomaly.startable) {
+      primaryAction = 'Anomaly Scanning starten';
+      primaryItem = anomaly.item;
+      explanation = 'Das Zielresearch ist sichtbar startbar und hat höchste Priorität.';
+    } else if (energy && (energy.free < 40 || energy.ratio >= 0.92) && solar) {
+      primaryAction = 'Solar Plant bauen, weil Energie knapp ist';
+      primaryItem = solar;
+      explanation = `Energie ist kritisch (${energy.used}/${energy.produced}); weitere Ausbauten können sonst blockieren.`;
+    } else if (lab < 3 && labBuilding) {
+      primaryAction = 'Research Lab auf Lv3 bringen';
+      primaryItem = labBuilding;
+      explanation = 'Research Lab Lv3 ist zentral für den Anomaly-Scanning-Pfad.';
+    } else if (basicSensors.startable) {
+      primaryAction = 'Basic Sensors starten';
+      primaryItem = basicSensors.item;
+      explanation = 'Basic Sensors ist ein früher Schlüssel im Anomaly-Scanning-Pfad.';
+    } else if (researchPlan.nextResearch?.startable) {
+      primaryAction = `${researchPlan.nextResearch.name} starten`;
+      primaryItem = researchPlan.nextResearch.item;
+      explanation = 'Das nächste sichtbare Research im Dependency-Plan ist startbar.';
+    } else if (buildingAdvisor.recommended) {
+      primaryAction = `${buildingAdvisor.recommended.name} auf Lv${buildingAdvisor.recommended.targetLevel} bringen`;
+      primaryItem = buildingAdvisor.recommended;
+      explanation = buildingAdvisor.recommended.reason || explanation;
+    } else if (!fleetState.hasMining) {
+      primaryAction = 'Mining prüfen, weil kein Mining erkannt wurde';
+      explanation = 'Frühes Mining ist guide-relevant, aber aktuell nicht sicher erkannt.';
+    } else {
+      const first = actionList[0];
+      primaryAction = first ? `${first.name} prüfen` : goalState.nextStep;
+      primaryItem = first || null;
+    }
+
+    const aff = primaryItem ? affordability(primaryItem, resources) : null;
+    if (aff?.missing?.length) secondaryActions.push(`Warten bis bezahlbar: ${aff.waitText}`);
+
+    return {
+      primaryAction,
+      primaryItem,
+      primaryStatus: getActionStatus(primaryItem),
+      secondaryActions: [...new Set(secondaryActions)].slice(0, 5),
+      blockers: [...new Set(blockers)].slice(0, 5),
+      confidence: confidenceFromData(blockers, secondaryActions),
+      explanation,
+      affordability: aff
+    };
+  }
+
+  function buildSessionPlan(resources, buildings, researchItems, fleetState, nextActionPlanner, buildingAdvisor) {
+    const actionList = actions(resources, buildings, researchItems);
+    const now = [];
+    const next30 = [];
+    const next60 = [];
+    const next120 = [];
+    const idleRisks = [];
+
+    if (nextActionPlanner.primaryAction) now.push(nextActionPlanner.primaryAction);
+
+    for (const action of actionList) {
+      if (action.actionState === 'jetzt mÃ¶glich' || action.actionState === 'startbar') {
+        now.push(`${action.name} ${action.kind === 'research' ? 'starten' : 'bauen/upgrade prüfen'}`);
+      } else if (action.affordability?.waitHours <= 0.5) {
+        next30.push(`${action.name}: ${action.affordability.waitText}`);
+      } else if (action.affordability?.waitHours <= 1) {
+        next60.push(`${action.name}: ${action.affordability.waitText}`);
+      } else if (action.affordability?.waitHours <= 2) {
+        next120.push(`${action.name}: ${action.affordability.waitText}`);
+      }
+    }
+
+    if (!fleetState.hasMining) now.push('Mining prüfen');
+    for (const hint of getCachedBranches().filter(branch => !branch.cached)) now.push(`${hint.label} Research-Branch öffnen`);
+
+    const energy = getEnergy(resources);
+    if (resources.some(resource => resource.name !== 'Energy' && soonFull(resource.storageFullIn))) idleRisks.push('Storage bald voll');
+    if (energy && (energy.free < 40 || energy.ratio >= 0.92)) idleRisks.push('Energie knapp');
+    if (fleetState.free > 0) idleRisks.push('Fleet Slots frei');
+    if (buildingAdvisor.recommended?.affordability?.waitHours <= 2 && buildingAdvisor.recommended.actionState !== 'jetzt mÃ¶glich') {
+      idleRisks.push('Build queue frei halten: gutes Gebäude bald bezahlbar');
+    }
+    if (researchItems.some(item => item.isStartable)) idleRisks.push('Research sichtbar startbar, aber nicht gestartet');
+
+    return {
+      now: [...new Set(now)].slice(0, 6),
+      next30: [...new Set(next30)].slice(0, 5),
+      next60: [...new Set(next60)].slice(0, 5),
+      next120: [...new Set(next120)].slice(0, 5),
+      idleRisks: [...new Set(idleRisks)].slice(0, 6)
+    };
+  }
+
+  function relativeTime(ts) {
+    if (!ts) return 'unbekannt';
+    const minutes = Math.max(0, Math.floor((Date.now() - ts) / 60000));
+    if (minutes < 2) return 'gerade eben';
+    if (minutes < 60) return `vor ${minutes}m`;
+    return `vor ${Math.floor(minutes / 60)}h`;
+  }
+
+  function buildDataQuality(resources, buildings, researchItems, fleet, nextAction, buildingAdvisor) {
+    const snapshots = getSnapshots();
+    const cachedBranches = getCachedBranches();
+
+    return {
+      version: '0.7.0',
+      path: location.pathname + location.search,
+      cachedBranches,
+      buildingsCached: Array.isArray(snapshots.buildings) && snapshots.buildings.length > 0,
+      fleetCached: !!snapshots.fleet,
+      miningDetected: !!fleet.hasMining,
+      lastUpdated: relativeTime(snapshots.updatedAt),
+      buildingsCount: buildings.length,
+      researchCount: researchItems.length,
+      fleetState: fleet,
+      resources,
+      labLevel: labLevel(buildings),
+      nextAction: nextAction.primaryAction,
+      buildingRecommendation: buildingAdvisor.recommended?.name || null
+    };
+  }
+
   function rank(item, resources, buildings) {
     const name = norm(item.name);
 
@@ -1015,7 +1303,7 @@
 
     context.phase = getBuildingPhase(context);
 
-    const queue = candidates
+    const scoredCandidates = candidates
       .map(building => {
         const aff = affordability(building, resources);
         let actionState = 'unbekannt';
@@ -1043,8 +1331,9 @@
           source: `${GUIDE}: Gebäudeberater`
         };
       })
-      .sort((a, b) => b.score - a.score)
-      .slice(0, 5);
+      .sort((a, b) => b.score - a.score);
+
+    const queue = scoredCandidates.slice(0, 5);
 
     const notes = [];
 
@@ -1063,6 +1352,14 @@
 
     return {
       recommended: queue[0] || null,
+      top5: queue,
+      skippedLowPriority: scoredCandidates.slice(5).filter(building => building.score < 250).slice(0, 5),
+      warnings: notes,
+      dataQuality: {
+        buildingsKnown: candidates.length > 0,
+        costsKnown: candidates.some(building => building.costs?.length),
+        fromCacheCount: candidates.filter(building => building.fromCache).length
+      },
       queue,
       phase: context.phase,
       notes
@@ -1104,9 +1401,10 @@
     } else if (name === 'medical bay') {
       score = 95;
     } else if (name === 'storage complex') {
-      score = context.anyStorageSoonFull ? 300 : 45;
+      score = context.anyStorageSoonFull ? 650 : 45;
     } else if (name === 'construction yard') {
-      score = 40;
+      const manyAffordable = context.buildings.filter(item => affordability(item, context.resources).affordable === true).length;
+      score = manyAffordable >= 3 ? 420 : 40;
     } else {
       const guideIndex = GUIDE_BUILD_ORDER.findIndex(item => norm(item) === name);
       score = guideIndex >= 0 ? 330 - guideIndex * 18 : 120;
@@ -1282,7 +1580,7 @@
       <div class="nlh-header">
         <div>
           <strong>Nexus Helper</strong>
-          <span class="nlh-version">v0.6.0</span>
+          <span class="nlh-version">v0.7.0</span>
         </div>
         <div class="nlh-actions">
           <button class="nlh-toggle">−</button>
@@ -1651,6 +1949,154 @@
     `;
   }
 
+  function pillClass(value) {
+    if (/hoch|jetzt|erledigt|ja/i.test(value)) return 'good';
+    if (/blockiert|nein/i.test(value)) return 'danger';
+    return 'warn';
+  }
+
+  function renderNextAction(planner) {
+    const missingHtml = planner.affordability?.missing?.length
+      ? `<div class="nlh-missing">${planner.affordability.missing.map(missing => `
+          <span class="nlh-pill warn">fehlt ${esc(missing.name)} ${fmtNum(missing.deficit)} · ${fmtTime(missing.waitHours)}</span>
+        `).join('')}</div>`
+      : '';
+
+    return `
+      <div class="nlh-card top">
+        <div class="nlh-card-title">${esc(planner.primaryAction || 'Daten vervollständigen')}</div>
+        <div>
+          <span class="nlh-pill ${pillClass(planner.primaryStatus)}">${esc(planner.primaryStatus)}</span>
+          <span class="nlh-pill ${pillClass(planner.confidence)}">Confidence: ${esc(planner.confidence)}</span>
+          ${planner.affordability?.known ? `<span class="nlh-pill ${planner.affordability.affordable ? 'good' : 'warn'}">Wartezeit: ${esc(planner.affordability.waitText)}</span>` : ''}
+        </div>
+        <div class="nlh-reason">${esc(planner.explanation)}</div>
+        ${missingHtml}
+        ${planner.secondaryActions.length ? `<div class="nlh-missing">${planner.secondaryActions.map(item => `<span class="nlh-pill warn">${esc(item)}</span>`).join('')}</div>` : ''}
+        ${planner.blockers.length ? `<div class="nlh-missing">${planner.blockers.map(item => `<span class="nlh-pill danger">${esc(item)}</span>`).join('')}</div>` : ''}
+      </div>
+    `;
+  }
+
+  function renderResearchPlan(plan) {
+    const missingHtml = plan.missing.length
+      ? plan.missing.map(item => `<span class="nlh-pill ${item.hard ? 'warn' : ''}">${esc(item.name)}: ${esc(item.state)}${item.hard ? '' : ' (optional)'}</span>`).join('')
+      : '<span class="nlh-pill good">Alle sichtbaren Schritte erledigt</span>';
+    const blockedHtml = plan.prereqMissing.length
+      ? plan.prereqMissing.map(item => `<span class="nlh-pill danger">${esc(item.name)}</span>`).join('')
+      : '';
+
+    return `
+      <div class="nlh-card">
+        <div class="nlh-card-title">Ziel: ${esc(plan.target)}</div>
+        <div>
+          <span class="nlh-pill">${esc(plan.progress.done)}/${esc(plan.progress.total)}</span>
+          <span class="nlh-pill ${plan.startable ? 'good' : plan.blocked ? 'danger' : 'warn'}">${plan.completed ? 'erledigt' : plan.startable ? 'startbar' : plan.blocked ? 'blockiert' : 'wartet'}</span>
+        </div>
+        <div class="nlh-reason">Nächstes Research-Ziel: ${esc(plan.nextResearch?.name || 'Daten vervollständigen')}</div>
+        <div class="nlh-missing">${missingHtml}</div>
+        ${blockedHtml ? `<div class="nlh-missing">${blockedHtml}</div>` : ''}
+        ${plan.unknownDataHints.length ? `<div class="nlh-missing">${plan.unknownDataHints.map(item => `<span class="nlh-pill warn">Daten fehlen: ${esc(item)}</span>`).join('')}</div>` : ''}
+      </div>
+    `;
+  }
+
+  function renderPlanList(title, items) {
+    return `
+      <div class="nlh-card">
+        <div class="nlh-card-title">${esc(title)}</div>
+        ${
+          items.length
+            ? items.map(item => `<div class="nlh-check-row"><div class="nlh-check-label">${esc(item)}</div></div>`).join('')
+            : '<div class="nlh-muted">Keine Punkte erkannt.</div>'
+        }
+      </div>
+    `;
+  }
+
+  function renderSessionPlan(plan) {
+    return `
+      ${renderPlanList('Jetzt', plan.now)}
+      ${renderPlanList('Nächste 30m', plan.next30)}
+      ${renderPlanList('Nächste 60m', plan.next60)}
+      ${renderPlanList('Nächste 120m', plan.next120)}
+      ${renderPlanList('Risiken', plan.idleRisks)}
+    `;
+  }
+
+  function renderOnboarding(dataQuality) {
+    const needs = [];
+
+    if (!dataQuality.buildingsCached) needs.push('Buildings');
+    if (!dataQuality.fleetCached) needs.push('Fleet', 'Mining');
+    for (const branch of dataQuality.cachedBranches) {
+      if (!branch.cached) needs.push(`Research ${branch.label}`);
+    }
+    if (!document.querySelector('.resource-bar .resource-item')) needs.push('Overview');
+
+    if (needs.length <= 1) return '';
+
+    return `
+      <div class="nlh-section">
+        <div class="nlh-card top">
+          <div class="nlh-card-title">Für bessere Empfehlungen einmal öffnen:</div>
+          <div class="nlh-missing">${[...new Set(['Overview', ...needs])].map(item => `<span class="nlh-pill warn">${esc(item)}</span>`).join('')}</div>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderDataQuality(dataQuality) {
+    return `
+      <div class="nlh-card">
+        <div>
+          ${dataQuality.cachedBranches.map(branch => `<span class="nlh-pill ${branch.cached ? 'good' : 'warn'}">${esc(branch.label)}: ${branch.cached ? 'cached' : 'fehlt'}</span>`).join('')}
+          <span class="nlh-pill ${dataQuality.buildingsCached ? 'good' : 'warn'}">Buildings cached: ${dataQuality.buildingsCached ? 'Ja' : 'Nein'}</span>
+          <span class="nlh-pill ${dataQuality.fleetCached ? 'good' : 'warn'}">Fleet cached: ${dataQuality.fleetCached ? 'Ja' : 'Nein'}</span>
+          <span class="nlh-pill ${dataQuality.miningDetected ? 'good' : 'danger'}">Mining erkannt: ${dataQuality.miningDetected ? 'Ja' : 'Nein'}</span>
+          <span class="nlh-pill">Update: ${esc(dataQuality.lastUpdated)}</span>
+        </div>
+        <button class="nlh-debug-copy">Debug kopieren</button>
+        <div class="nlh-debug-output nlh-footer-note"></div>
+      </div>
+    `;
+  }
+
+  function getCurrentDebugData() {
+    const resources = getResources();
+    const buildings = getBuildings();
+    const research = getResearch();
+    const fleet = fleetState();
+    const advisor = getBuildingAdvisor(resources, buildings, research, fleet);
+    const goalState = buildGoalState(resources, buildings, research, fleet);
+    const nextAction = buildNextActionPlanner(resources, buildings, research, fleet, goalState, advisor);
+
+    return buildDataQuality(resources, buildings, research, fleet, nextAction, advisor);
+  }
+
+  function copyDebugData() {
+    const output = JSON.stringify(getCurrentDebugData(), null, 2);
+    const panel = document.getElementById(PANEL_ID);
+    const target = panel?.querySelector('.nlh-debug-output');
+
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(output)
+        .then(() => {
+          if (target) target.textContent = 'Debug JSON kopiert.';
+        })
+        .catch(() => {
+          if (target) target.innerHTML = `<textarea rows="6" style="width:100%">${esc(output)}</textarea>`;
+        });
+      return;
+    }
+
+    if (target) {
+      target.innerHTML = `<textarea rows="6" style="width:100%">${esc(output)}</textarea>`;
+    } else {
+      prompt('Debug JSON', output);
+    }
+  }
+
   function renderBuildingAdvisor(advisor) {
     const phaseLabel = {
       anomaly_rush: 'Anomaly Rush',
@@ -1733,7 +2179,7 @@
           }
         </div>
         <div class="nlh-card">
-          <div class="nlh-card-title">Reihenfolge</div>
+          <div class="nlh-card-title">Gebäude-Reihenfolge</div>
           <div class="nlh-priority-list">${listHtml}</div>
         </div>
         ${advisor.notes.map(note => `<div class="nlh-footer-note">${esc(note)}</div>`).join('')}
@@ -1770,6 +2216,10 @@
     const buildingAdvisor = getBuildingAdvisor(resources, buildings, research, fleet);
     const checklist = buildGuideChecklist(resources, buildings, research, fleet);
     const cacheHint = researchCacheHint();
+    const nextActionPlanner = buildNextActionPlanner(resources, buildings, research, fleet, goalState, buildingAdvisor);
+    const researchPlan = buildResearchDependencyPlan('Anomaly Scanning', research, buildings);
+    const sessionPlan = buildSessionPlan(resources, buildings, research, fleet, nextActionPlanner, buildingAdvisor);
+    const dataQuality = buildDataQuality(resources, buildings, research, fleet, nextActionPlanner, buildingAdvisor);
     const actionList = actions(resources, buildings, research);
     const warningList = warnings(resources, fleet);
 
@@ -1816,6 +2266,8 @@
       `).join('');
 
     panel.querySelector('.nlh-body').innerHTML = `
+      ${renderOnboarding(dataQuality)}
+
       <div class="nlh-section">
         <div class="nlh-section-title">
           <span>Status</span>
@@ -1830,6 +2282,21 @@
       <div class="nlh-section">
         <div class="nlh-section-title">Hauptziel</div>
         ${renderGoal(goalState, cacheHint)}
+      </div>
+
+      <div class="nlh-section">
+        <div class="nlh-section-title">Next Action</div>
+        ${renderNextAction(nextActionPlanner)}
+      </div>
+
+      <div class="nlh-section">
+        <div class="nlh-section-title">Research Plan</div>
+        ${renderResearchPlan(researchPlan)}
+      </div>
+
+      <div class="nlh-section">
+        <div class="nlh-section-title">Session Plan</div>
+        ${renderSessionPlan(sessionPlan)}
       </div>
 
       <div class="nlh-section">
@@ -1886,10 +2353,17 @@
         ${resourcesHtml || '<div class="nlh-muted">Keine Ressourcen erkannt.</div>'}
       </div>
 
+      <div class="nlh-section">
+        <div class="nlh-section-title">Datenstatus</div>
+        ${renderDataQuality(dataQuality)}
+      </div>
+
       <div class="nlh-footer-note">
         Für beste Ergebnisse einmal /overview, /fleet, /mining, /buildings und alle Research-Branches öffnen. Research/Fleet/Buildings werden lokal gecached.
       </div>
     `;
+
+    panel.querySelector('.nlh-debug-copy')?.addEventListener('click', copyDebugData);
   }
 
   function boot() {
