@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nexus Legacy Helper
 // @namespace    https://niceeins.local/
-// @version      0.4.1
+// @version      0.5.0
 // @description  Passive guide-based helper for Nexus Legacy: resources, build/research hints, affordability, wait times, research/fleet cache. No automation.
 // @match        https://*.nexuslegacy.space/*
 // @match        https://nexuslegacy.space/*
@@ -617,6 +617,177 @@
     };
   }
 
+  function findResearch(researchItems, name) {
+    return researchItems.find(item => norm(item.name) === norm(name)) || null;
+  }
+
+  function researchState(researchItems, name) {
+    const item = findResearch(researchItems, name);
+
+    if (!item) {
+      return {
+        name,
+        item: null,
+        done: false,
+        state: 'nicht gesehen',
+        tone: 'warn'
+      };
+    }
+
+    if (item.level > 0) {
+      return {
+        name,
+        item,
+        done: true,
+        state: 'erledigt',
+        tone: 'good'
+      };
+    }
+
+    if (item.isStartable) {
+      return {
+        name,
+        item,
+        done: false,
+        state: 'startbar',
+        tone: 'good'
+      };
+    }
+
+    if (item.isBlocked) {
+      return {
+        name,
+        item,
+        done: false,
+        state: 'blockiert',
+        tone: 'danger'
+      };
+    }
+
+    return {
+      name,
+      item,
+      done: false,
+      state: 'sichtbar',
+      tone: 'warn'
+    };
+  }
+
+  function labChecklistState(buildings, targetLevel) {
+    const lab = labLevel(buildings);
+
+    return {
+      done: lab >= targetLevel,
+      state: lab >= targetLevel
+        ? 'erledigt'
+        : lab
+          ? `Lab Lv.${lab}`
+          : 'nicht gesehen',
+      tone: lab >= targetLevel ? 'good' : 'warn'
+    };
+  }
+
+  function buildGoalState(resources, buildings, researchItems, fleetState) {
+    const steps = [
+      researchState(researchItems, 'Basic Sensors'),
+      researchState(researchItems, 'Probe Technology'),
+      researchState(researchItems, 'Structural Alloys'),
+      researchState(researchItems, 'Orbital Mechanics'),
+      {
+        name: 'Research Lab Lv3',
+        item: null,
+        done: labLevel(buildings) >= 3,
+        state: labLevel(buildings) >= 3
+          ? 'erledigt'
+          : labLevel(buildings)
+            ? `Lab Lv.${labLevel(buildings)}`
+            : 'nicht gesehen',
+        tone: labLevel(buildings) >= 3 ? 'good' : 'warn'
+      },
+      researchState(researchItems, 'Anomaly Scanning')
+    ];
+
+    const basicSensors = steps[0];
+    const orbitalMechanics = steps[3];
+    const anomalyScanning = steps[5];
+    const lab = labLevel(buildings) || 0;
+    const labKnown = !!buildings.find(building => norm(building.name) === 'research lab');
+    const doneCount = steps.filter(step => step.done).length;
+
+    let nextStep = 'Research-Branches einmal öffnen, damit der Helper Prereqs sehen kann';
+
+    if (anomalyScanning.done) {
+      nextStep = 'Anomaly Scanning ist erforscht';
+    } else if (basicSensors.item?.isStartable) {
+      nextStep = 'Basic Sensors starten';
+    } else if (!basicSensors.done) {
+      nextStep = 'Basic Sensors freischalten';
+    } else if (lab < 3 && labKnown) {
+      nextStep = 'Research Lab auf Lv3 bringen';
+    } else if (orbitalMechanics.item?.isStartable) {
+      nextStep = 'Orbital Mechanics starten';
+    } else if (anomalyScanning.item?.isStartable) {
+      nextStep = 'Anomaly Scanning starten';
+    }
+
+    return {
+      title: 'Anomaly Scanning',
+      status: `${doneCount}/${steps.length} Schritte erledigt`,
+      missingSteps: steps.filter(step => !step.done).map(step => ({
+        label: step.name,
+        state: step.state,
+        tone: step.tone
+      })),
+      nextStep
+    };
+  }
+
+  function buildGuideChecklist(resources, buildings, researchItems, fleetState) {
+    const mining = fleetState.hasMining
+      ? { state: 'erledigt', tone: 'good' }
+      : { state: 'nicht erkannt', tone: 'danger' };
+
+    const fleetSlots = fleetState.max != null
+      ? { state: `geprüft ${fleetState.active}/${fleetState.max}`, tone: 'good' }
+      : { state: 'nicht gesehen', tone: 'warn' };
+
+    const workforce = researchState(researchItems, 'Workforce Management');
+    const storageConstruction = [...buildings, ...researchItems].some(item =>
+      LOW_EARLY_PRIORITY.has(norm(item.name)) && item.isStartable
+    )
+      ? { state: 'zurückstellen', tone: 'warn' }
+      : { state: 'Guide-Regel aktiv', tone: 'good' };
+
+    return [
+      { label: 'Mining läuft', ...mining },
+      { label: 'Fleet-Slots geprüft', ...fleetSlots },
+      { label: 'Research Lab Lv2 erreicht', ...labChecklistState(buildings, 2) },
+      { label: 'Research Lab Lv3 erreicht', ...labChecklistState(buildings, 3) },
+      { label: 'Basic Sensors erforscht oder startbar/sichtbar', ...researchState(researchItems, 'Basic Sensors') },
+      { label: 'Probe Technology erforscht oder startbar/sichtbar', ...researchState(researchItems, 'Probe Technology') },
+      { label: 'Structural Alloys erforscht oder startbar/sichtbar', ...researchState(researchItems, 'Structural Alloys') },
+      { label: 'Orbital Mechanics erforscht oder startbar/sichtbar', ...researchState(researchItems, 'Orbital Mechanics') },
+      { label: 'Anomaly Scanning erforscht oder startbar/sichtbar', ...researchState(researchItems, 'Anomaly Scanning') },
+      {
+        label: 'Workforce Management vorgemerkt',
+        state: workforce.item ? workforce.state : 'nicht gesehen',
+        tone: workforce.item ? workforce.tone : 'warn'
+      },
+      { label: 'Storage/Construction nicht überpriorisiert', ...storageConstruction }
+    ];
+  }
+
+  function researchCacheHint() {
+    const snapshots = getSnapshots();
+    const branchCount = Object.values(snapshots.researchByBranch || {})
+      .filter(items => Array.isArray(items) && items.length)
+      .length;
+
+    return branchCount < 3
+      ? 'Research-Cache unvollständig: Science/Economy/Military einmal öffnen.'
+      : '';
+  }
+
   function rank(item, resources, buildings) {
     const name = norm(item.name);
 
@@ -835,7 +1006,7 @@
       <div class="nlh-header">
         <div>
           <strong>Nexus Helper</strong>
-          <span class="nlh-version">v0.4.1</span>
+          <span class="nlh-version">v0.5.0</span>
         </div>
         <div class="nlh-actions">
           <button class="nlh-toggle">−</button>
@@ -962,6 +1133,23 @@
         gap: 8px;
         padding: 4px 0;
         border-bottom: 1px solid rgba(148,163,184,.10);
+      }
+
+      #${PANEL_ID} .nlh-check-row {
+        display: grid;
+        grid-template-columns: 1fr auto;
+        gap: 8px;
+        align-items: center;
+        padding: 4px 0;
+        border-bottom: 1px solid rgba(148,163,184,.10);
+      }
+
+      #${PANEL_ID} .nlh-check-label {
+        min-width: 0;
+      }
+
+      #${PANEL_ID} .nlh-check-state {
+        white-space: nowrap;
       }
 
       #${PANEL_ID} .nlh-muted {
@@ -1146,6 +1334,43 @@
     `;
   }
 
+  function renderGoal(goalState, cacheHint) {
+    return `
+      <div class="nlh-card top">
+        <div class="nlh-card-title">Hauptziel: ${esc(goalState.title)}</div>
+        <div>
+          <span class="nlh-pill">${esc(goalState.status)}</span>
+          ${cacheHint ? `<span class="nlh-pill warn">${esc(cacheHint)}</span>` : ''}
+        </div>
+        <div class="nlh-reason">Nächster Schritt: ${esc(goalState.nextStep)}</div>
+        ${
+          goalState.missingSteps.length
+            ? `<div class="nlh-missing">
+                ${goalState.missingSteps.map(step => `
+                  <span class="nlh-pill ${esc(step.tone)}">${esc(step.label)}: ${esc(step.state)}</span>
+                `).join('')}
+              </div>`
+            : '<div class="nlh-good nlh-small">Alle Schritte für dieses Ziel erkannt.</div>'
+        }
+      </div>
+    `;
+  }
+
+  function renderChecklist(checklist) {
+    return `
+      <div class="nlh-card">
+        ${checklist.map(item => `
+          <div class="nlh-check-row">
+            <div class="nlh-check-label">${esc(item.label)}</div>
+            <div class="nlh-check-state">
+              <span class="nlh-pill ${esc(item.tone)}">${esc(item.state)}</span>
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  }
+
   function render() {
     const panel = document.getElementById(PANEL_ID);
 
@@ -1156,6 +1381,9 @@
     const research = getResearch();
     const fleet = fleetState();
     const currentStatus = status(buildings);
+    const goalState = buildGoalState(resources, buildings, research, fleet);
+    const checklist = buildGuideChecklist(resources, buildings, research, fleet);
+    const cacheHint = researchCacheHint();
     const actionList = actions(resources, buildings, research);
     const warningList = warnings(resources, fleet);
 
@@ -1211,6 +1439,16 @@
           ${statusBits.map(bit => `<span class="nlh-pill">${esc(bit)}</span>`).join('') || '<span class="nlh-muted">Status nicht erkannt.</span>'}
           <div class="nlh-footer-note">Nur Overlay/Rechner. Keine Klicks, keine Requests, keine Automatisierung.</div>
         </div>
+      </div>
+
+      <div class="nlh-section">
+        <div class="nlh-section-title">Hauptziel</div>
+        ${renderGoal(goalState, cacheHint)}
+      </div>
+
+      <div class="nlh-section">
+        <div class="nlh-section-title">Guide-Checkliste</div>
+        ${renderChecklist(checklist)}
       </div>
 
       <div class="nlh-section">
