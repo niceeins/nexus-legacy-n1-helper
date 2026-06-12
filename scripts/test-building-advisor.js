@@ -104,5 +104,11 @@ assert(!/\bfetch\s*\(/.test(source), 'script must not call fetch()');
 assert(!/\bXMLHttpRequest\b/.test(source), 'script must not use XMLHttpRequest');
 assert(!/\.click\s*\(/.test(source), 'script must not perform DOM clicks');
 assert(!/\bPOST\b|\bPUT\b|\bDELETE\b/.test(source), 'script must not contain write request verbs');
+assert(!/[ÃÂ�]/.test(source), 'userscript must not contain mojibake/broken UTF-8 characters');
+includes("right: -388px;", 'collapsed panel should slide right into a side rail');
+includes("writing-mode: vertical-rl;", 'collapsed panel should keep a vertical side rail header');
+includes('function renderRailStatus(resources, warningList)', 'collapsed rail should render key resource info');
+includes('class="nlh-rail-status"', 'collapsed rail should have a visible status container');
+includes('⚠', 'collapsed rail should show an alert marker when important warnings exist');
 
 console.log('v0.7.2 planner source checks passed');

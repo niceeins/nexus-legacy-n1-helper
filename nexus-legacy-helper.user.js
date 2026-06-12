@@ -974,7 +974,7 @@
 
   function getActionStatus(item) {
     if (!item) return 'Daten fehlen';
-    if (item.actionState === 'jetzt mÃ¶glich' || item.actionState === 'startbar') return 'jetzt';
+    if (item.actionState === 'jetzt möglich' || item.actionState === 'startbar') return 'jetzt';
     if (item.actionState === 'blockiert' || item.isBlocked) return 'blockiert';
     if (item.actionState?.startsWith('wartet')) return 'wartet';
     if (item.fromCache) return 'Daten fehlen';
@@ -1072,7 +1072,7 @@
     if (nextActionPlanner.primaryAction) now.push(nextActionPlanner.primaryAction);
 
     for (const action of actionList) {
-      if (action.actionState === 'jetzt mÃ¶glich' || action.actionState === 'startbar') {
+      if (action.actionState === 'jetzt möglich' || action.actionState === 'startbar') {
         now.push(`${action.name} ${action.kind === 'research' ? 'starten' : 'bauen/upgrade prüfen'}`);
       } else if (action.affordability?.waitHours <= 0.5) {
         next30.push(`${action.name}: ${action.affordability.waitText}`);
@@ -1090,7 +1090,7 @@
     if (resources.some(resource => resource.name !== 'Energy' && soonFull(resource.storageFullIn))) idleRisks.push('Storage bald voll');
     if (energy && (energy.free < 40 || energy.ratio >= 0.92)) idleRisks.push('Energie knapp');
     if (fleetState.free > 0) idleRisks.push('Fleet Slots frei');
-    if (buildingAdvisor.recommended?.affordability?.waitHours <= 2 && buildingAdvisor.recommended.actionState !== 'jetzt mÃ¶glich') {
+    if (buildingAdvisor.recommended?.affordability?.waitHours <= 2 && buildingAdvisor.recommended.actionState !== 'jetzt möglich') {
       idleRisks.push('Build queue frei halten: gutes Gebäude bald bezahlbar');
     }
     if (researchItems.some(item => item.isStartable)) idleRisks.push('Research sichtbar startbar, aber nicht gestartet');
@@ -1628,10 +1628,11 @@
 
     panel.innerHTML = `
       <div class="nlh-header">
-        <div>
+        <div class="nlh-title">
           <strong>Nexus Helper</strong>
           <span class="nlh-version">v0.7.2</span>
         </div>
+        <div class="nlh-rail-status"></div>
         <div class="nlh-actions">
           <button class="nlh-toggle">−</button>
           <button class="nlh-peek" title="Overlay beim Hover transparent">&#128065;</button>
@@ -1660,11 +1661,16 @@
         box-shadow: 0 18px 45px rgba(0,0,0,.48);
         font-family: system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;
         font-size: 13px;
-        transition: opacity .12s ease;
+        transition: opacity .12s ease, right .18s ease, height .18s ease;
       }
 
       #${PANEL_ID}.collapsed {
-        width: 290px;
+        right: -388px;
+        width: 430px;
+        height: min(84vh, 520px);
+        max-height: min(84vh, 520px);
+        overflow: visible;
+        border-radius: 12px 0 0 12px;
       }
 
       #${PANEL_ID}.peek-transparent {
@@ -1687,6 +1693,31 @@
         background: rgba(7,11,20,.99);
       }
 
+      #${PANEL_ID}.collapsed .nlh-header {
+        width: 42px;
+        height: 100%;
+        box-sizing: border-box;
+        flex-direction: column;
+        justify-content: flex-start;
+        align-items: center;
+        gap: 10px;
+        padding: 8px 4px;
+        border-bottom: 0;
+        border-right: 1px solid rgba(148,163,184,.25);
+        writing-mode: vertical-rl;
+      }
+
+      #${PANEL_ID} .nlh-title {
+        min-width: 0;
+      }
+
+      #${PANEL_ID}.collapsed .nlh-title {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        white-space: nowrap;
+      }
+
       #${PANEL_ID} .nlh-version {
         margin-left: 6px;
         font-size: 11px;
@@ -1694,11 +1725,40 @@
         font-weight: 650;
       }
 
+      #${PANEL_ID}.collapsed .nlh-version {
+        margin-left: 0;
+      }
+
+      #${PANEL_ID} .nlh-rail-status {
+        display: none;
+      }
+
+      #${PANEL_ID}.collapsed .nlh-rail-status {
+        display: flex;
+        align-items: center;
+        gap: 7px;
+        color: #cbd5e1;
+        font-size: 11px;
+        font-weight: 700;
+        white-space: nowrap;
+      }
+
       #${PANEL_ID} .nlh-actions {
         display: flex;
         gap: 5px;
         flex-wrap: wrap;
         justify-content: flex-end;
+      }
+
+      #${PANEL_ID}.collapsed .nlh-actions {
+        writing-mode: horizontal-tb;
+        flex-direction: column;
+        align-items: center;
+        flex-wrap: nowrap;
+      }
+
+      #${PANEL_ID}.collapsed .nlh-actions button:not(.nlh-toggle) {
+        display: none;
       }
 
       #${PANEL_ID} button {
@@ -2010,7 +2070,8 @@
         }
 
         #${PANEL_ID}.collapsed {
-          width: auto;
+          right: -318px;
+          width: 360px;
         }
       }
     `;
@@ -2270,7 +2331,7 @@
     if (!missing?.length) return '';
 
     const visible = missing.slice(0, limit).map(item => `
-      <span class="nlh-pill warn">fehlt ${esc(item.name)} ${fmtNum(item.deficit)} Â· ${fmtTime(item.waitHours)}</span>
+      <span class="nlh-pill warn">fehlt ${esc(item.name)} ${fmtNum(item.deficit)} · ${fmtTime(item.waitHours)}</span>
     `).join('');
     const more = missing.length > limit ? `<span class="nlh-pill warn">+${missing.length - limit} mehr</span>` : '';
 
@@ -2280,7 +2341,7 @@
   function renderTopNextAction(planner) {
     return `
       <div class="nlh-card top">
-        <div class="nlh-card-title">${esc(planner.primaryAction || 'Daten vervollstÃ¤ndigen')}</div>
+        <div class="nlh-card-title">${esc(planner.primaryAction || 'Daten vervollständigen')}</div>
         <div>
           <span class="nlh-pill ${pillClass(planner.primaryStatus)}">${esc(planner.primaryStatus)}</span>
           <span class="nlh-pill ${pillClass(planner.confidence)}">Confidence: ${esc(planner.confidence)}</span>
@@ -2295,10 +2356,10 @@
   function renderCompactBuilding(advisor) {
     const item = advisor.recommended;
 
-    if (!item) return '<div class="nlh-card"><div class="nlh-muted">NÃ¤chstes GebÃ¤ude: Buildings Cache fehlt.</div></div>';
+    if (!item) return '<div class="nlh-card"><div class="nlh-muted">Nächstes Gebäude: Buildings Cache fehlt.</div></div>';
 
     const stateClass =
-      item.actionState === 'jetzt mÃ¶glich' || item.actionState === 'startbar'
+      item.actionState === 'jetzt möglich' || item.actionState === 'startbar'
         ? 'good'
         : item.actionState === 'blockiert'
           ? 'danger'
@@ -2309,7 +2370,7 @@
 
     return `
       <div class="nlh-card">
-        <div class="nlh-card-title">NÃ¤chstes GebÃ¤ude: ${title}</div>
+        <div class="nlh-card-title">Nächstes Gebäude: ${title}</div>
         <div>
           <span class="nlh-pill">Lv.${esc(item.level)} -> ${esc(item.targetLevel)}</span>
           <span class="nlh-pill ${stateClass}">${esc(item.actionState)}</span>
@@ -2330,7 +2391,7 @@
           ${progress ? `<span class="nlh-pill">${esc(progress[1])}/${esc(progress[2])}</span>` : ''}
           ${cacheHint ? `<span class="nlh-pill warn">${esc(cacheHint)}</span>` : ''}
         </div>
-        <div class="nlh-reason nlh-clamp">NÃ¤chster Schritt: ${esc(goalState.nextStep)}</div>
+        <div class="nlh-reason nlh-clamp">Nächster Schritt: ${esc(goalState.nextStep)}</div>
       </div>
     `;
   }
@@ -2387,7 +2448,7 @@
             </div>
           `).join('')}
         </div>
-        <div class="nlh-footer-note">Cache: Research ${researchCached}/${dataQuality.cachedBranches.length} Â· Buildings ${dataQuality.buildingsCached ? 'ok' : 'fehlt'} Â· Fleet ${dataQuality.fleetCached ? 'ok' : 'fehlt'}</div>
+        <div class="nlh-footer-note">Cache: Research ${researchCached}/${dataQuality.cachedBranches.length} · Buildings ${dataQuality.buildingsCached ? 'ok' : 'fehlt'} · Fleet ${dataQuality.fleetCached ? 'ok' : 'fehlt'}</div>
       </div>
     `;
   }
@@ -2404,7 +2465,7 @@
         <div>
           <span class="nlh-pill warn">Phase: ${esc(phaseLabel)}</span>
         </div>
-        <div class="nlh-card"><div class="nlh-muted">Keine GebÃ¤udedaten erkannt. Ã–ffne einmal /buildings.</div></div>
+        <div class="nlh-card"><div class="nlh-muted">Keine Gebäudedaten erkannt. Öffne einmal /buildings.</div></div>
       `;
     }
 
@@ -2421,7 +2482,7 @@
                 <strong>${esc(building.name)} Lv${esc(building.targetLevel)}</strong>
                 <div class="nlh-muted nlh-small nlh-clamp">${esc(building.reason)}</div>
               </div>
-              <div><span class="nlh-pill ${building.actionState === 'jetzt mÃ¶glich' ? 'good' : building.actionState === 'blockiert' ? 'danger' : 'warn'}">${esc(building.actionState)}</span></div>
+              <div><span class="nlh-pill ${building.actionState === 'jetzt möglich' ? 'good' : building.actionState === 'blockiert' ? 'danger' : 'warn'}">${esc(building.actionState)}</span></div>
             </div>
           `).join('')}
         </div>
@@ -2486,6 +2547,24 @@
     return rows
       ? `<div class="nlh-card"><div class="nlh-resource-table">${rows}</div></div>`
       : '<div class="nlh-muted">Keine Ressourcen erkannt.</div>';
+  }
+
+  function renderRailStatus(resources, warningList) {
+    const energy = getEnergy(resources);
+    const ore = getRes(resources, 'Ore');
+    const silicates = getRes(resources, 'Silicates');
+    const hydrogen = getRes(resources, 'Hydrogen');
+    const hasDanger = warningList.some(warning => warning.type === 'danger');
+    const hasWarning = warningList.length > 0;
+    const bits = [];
+
+    if (hasDanger || hasWarning) bits.push(hasDanger ? '⚠' : '!');
+    if (energy) bits.push(`E ${fmtNum(energy.free)}`);
+    if (ore?.amount != null) bits.push(`O ${fmtNum(ore.amount)}`);
+    if (silicates?.amount != null) bits.push(`S ${fmtNum(silicates.amount)}`);
+    if (hydrogen?.amount != null) bits.push(`H ${fmtNum(hydrogen.amount)}`);
+
+    return bits.length ? bits.join(' · ') : 'Status';
   }
 
   function renderNextAction(planner) {
@@ -2748,6 +2827,7 @@
     const dataQuality = buildDataQuality(resources, buildings, research, fleet, nextActionPlanner, buildingAdvisor);
     const actionList = actions(resources, buildings, research);
     const warningList = warnings(resources, fleet);
+    const railStatus = renderRailStatus(resources, warningList);
 
     const statusBits = [];
 
@@ -2894,9 +2974,9 @@
         defaultOpen: true,
         badge: `<span class="nlh-pill ${researchPlan.startable ? 'good' : researchPlan.blocked ? 'danger' : 'warn'}">${esc(researchPlan.progress.done)}/${esc(researchPlan.progress.total)}</span>`
       }),
-      'building-order': renderCollapsibleSection('building-order', 'GebÃ¤ude-Reihenfolge', renderBuildingOrder(buildingAdvisor), {
+      'building-order': renderCollapsibleSection('building-order', 'Gebäude-Reihenfolge', renderBuildingOrder(buildingAdvisor), {
         defaultOpen: true,
-        badge: buildingAdvisor.recommended ? `<span class="nlh-pill ${buildingAdvisor.recommended.actionState === 'jetzt mÃ¶glich' ? 'good' : 'warn'}">${esc(buildingAdvisor.recommended.actionState)}</span>` : '<span class="nlh-pill warn">fehlt</span>'
+        badge: buildingAdvisor.recommended ? `<span class="nlh-pill ${buildingAdvisor.recommended.actionState === 'jetzt möglich' ? 'good' : 'warn'}">${esc(buildingAdvisor.recommended.actionState)}</span>` : '<span class="nlh-pill warn">fehlt</span>'
       }),
       'session-plan': renderCollapsibleSection('session-plan', 'Session Plan', renderSessionPlan(sessionPlan), {
         defaultOpen: false,
@@ -2914,7 +2994,7 @@
         defaultOpen: false,
         muted: true
       }),
-      priorities: renderCollapsibleSection('priorities', 'Top-PrioritÃ¤ten', renderTopPriorities(actionList, immediate, waiting, warningList), {
+      priorities: renderCollapsibleSection('priorities', 'Top-Prioritäten', renderTopPriorities(actionList, immediate, waiting, warningList), {
         defaultOpen: false,
         badge: `<span class="nlh-pill">${actionList.length}</span>`,
         danger: warningList.some(warning => warning.type === 'danger')
@@ -2929,6 +3009,10 @@
       })
     };
 
+    const rail = panel.querySelector('.nlh-rail-status');
+
+    if (rail) rail.textContent = railStatus;
+
     panel.querySelector('.nlh-body').innerHTML = `
       ${renderOnboarding(dataQuality)}
       ${renderTopSummary(nextActionPlanner, buildingAdvisor, goalState, warningList, cacheHint)}
@@ -2939,9 +3023,9 @@
           defaultOpen: true,
           badge: `<span class="nlh-pill ${researchPlan.startable ? 'good' : researchPlan.blocked ? 'danger' : 'warn'}">${esc(researchPlan.progress.done)}/${esc(researchPlan.progress.total)}</span>`
         })}
-        ${renderCollapsibleSection('building-order', 'GebÃ¤ude-Reihenfolge', renderBuildingOrder(buildingAdvisor), {
+        ${renderCollapsibleSection('building-order', 'Gebäude-Reihenfolge', renderBuildingOrder(buildingAdvisor), {
           defaultOpen: true,
-          badge: buildingAdvisor.recommended ? `<span class="nlh-pill ${buildingAdvisor.recommended.actionState === 'jetzt mÃ¶glich' ? 'good' : 'warn'}">${esc(buildingAdvisor.recommended.actionState)}</span>` : '<span class="nlh-pill warn">fehlt</span>'
+          badge: buildingAdvisor.recommended ? `<span class="nlh-pill ${buildingAdvisor.recommended.actionState === 'jetzt möglich' ? 'good' : 'warn'}">${esc(buildingAdvisor.recommended.actionState)}</span>` : '<span class="nlh-pill warn">fehlt</span>'
         })}
         ${renderCollapsibleSection('session-plan', 'Session Plan', renderSessionPlan(sessionPlan), {
           defaultOpen: false,
@@ -2959,7 +3043,7 @@
           defaultOpen: false,
           muted: true
         })}
-        ${renderCollapsibleSection('priorities', 'Top-PrioritÃ¤ten', renderTopPriorities(actionList, immediate, waiting, warningList), {
+        ${renderCollapsibleSection('priorities', 'Top-Prioritäten', renderTopPriorities(actionList, immediate, waiting, warningList), {
           defaultOpen: false,
           badge: `<span class="nlh-pill">${actionList.length}</span>`,
           danger: warningList.some(warning => warning.type === 'danger')
