@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.5
+
+- Increased DOM dump selector limits so building and research pages export all visible cards.
+- Added advisor and next-action details to DOM dump exports.
+
+## 0.7.4
+
+- Added per-page DOM dump capture and copy buttons for current/all visited Nexus pages.
+
 ## 0.7.3
 
 - Bumped userscript version so Tampermonkey detects the latest side-rail and encoding fixes.

@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nexus Legacy Helper
 // @namespace    https://niceeins.local/
-// @version      0.7.4
+// @version      0.7.5
 // @description  Passive guide-based helper for Nexus Legacy: resources, build/research hints, affordability, wait times, research/fleet cache. No automation.
 // @match        https://*.nexuslegacy.space/*
 // @match        https://nexuslegacy.space/*
@@ -141,7 +141,7 @@
       .trim();
   }
 
-  function dumpElements(selector, limit = 30) {
+  function dumpElements(selector, limit = 200) {
     return [...document.querySelectorAll(selector)]
       .slice(0, limit)
       .map((el, index) => ({
@@ -151,10 +151,29 @@
       }));
   }
 
+  function getDomDumpAdvisor() {
+    const resources = getResources();
+    const buildings = getBuildings();
+    const research = getResearch();
+    const fleet = fleetState();
+    const advisor = getBuildingAdvisor(resources, buildings, research, fleet);
+    const goalState = buildGoalState(resources, buildings, research, fleet);
+    const nextAction = buildNextActionPlanner(resources, buildings, research, fleet, goalState, advisor);
+
+    return {
+      phase: advisor.phase,
+      recommended: advisor.recommended,
+      queue: advisor.queue,
+      notes: advisor.notes,
+      nextAction: nextAction.primaryAction,
+      nextActionReason: nextAction.explanation
+    };
+  }
+
   function captureDomDump() {
     const key = location.pathname + location.search;
     const dump = {
-      version: '0.7.4',
+      version: '0.7.5',
       capturedAt: new Date().toISOString(),
       path: key,
       title: document.title,
@@ -172,13 +191,22 @@
         buildings: getBuildings(),
         research: getResearch(),
         fleet: fleetState()
-      }
+      },
+      advisor: getDomDumpAdvisor()
     };
 
     const all = getAllDomDumps();
     all[key] = dump;
     saveJson(DOM_DUMP_KEY, all);
     return dump;
+  }
+
+  function getDomDumpPayload() {
+    return {
+      version: '0.7.5',
+      exportedAt: new Date().toISOString(),
+      pages: getAllDomDumps()
+    };
   }
 
   function esc(value) {
@@ -1171,7 +1199,7 @@
     const domDumpPages = Object.keys(getAllDomDumps()).sort();
 
     return {
-      version: '0.7.4',
+      version: '0.7.5',
       path: location.pathname + location.search,
       cachedBranches,
       domDumpPages,
@@ -1685,7 +1713,7 @@
       <div class="nlh-header">
         <div class="nlh-title">
           <strong>Nexus Helper</strong>
-          <span class="nlh-version">v0.7.4</span>
+          <span class="nlh-version">v0.7.5</span>
         </div>
         <div class="nlh-rail-status"></div>
         <div class="nlh-actions">
@@ -2766,11 +2794,7 @@
 
   function copyDomDump(allPages = false) {
     const payload = allPages
-      ? {
-          version: '0.7.4',
-          exportedAt: new Date().toISOString(),
-          pages: getAllDomDumps()
-        }
+      ? getDomDumpPayload()
       : captureDomDump();
     const output = JSON.stringify(payload, null, 2);
     writeDebugOutput(output, allPages ? 'Alle DOM Dumps kopiert.' : 'DOM Dump kopiert.');
