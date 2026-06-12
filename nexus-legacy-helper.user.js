@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nexus Legacy Helper
 // @namespace    https://niceeins.local/
-// @version      0.7.2
+// @version      0.7.3
 // @description  Passive guide-based helper for Nexus Legacy: resources, build/research hints, affordability, wait times, research/fleet cache. No automation.
 // @match        https://*.nexuslegacy.space/*
 // @match        https://nexuslegacy.space/*
@@ -1117,7 +1117,7 @@
     const cachedBranches = getCachedBranches();
 
     return {
-      version: '0.7.2',
+      version: '0.7.3',
       path: location.pathname + location.search,
       cachedBranches,
       buildingsCached: Array.isArray(snapshots.buildings) && snapshots.buildings.length > 0,
@@ -1630,7 +1630,7 @@
       <div class="nlh-header">
         <div class="nlh-title">
           <strong>Nexus Helper</strong>
-          <span class="nlh-version">v0.7.2</span>
+          <span class="nlh-version">v0.7.3</span>
         </div>
         <div class="nlh-rail-status"></div>
         <div class="nlh-actions">

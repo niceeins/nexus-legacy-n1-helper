@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.3
+
+- Bumped userscript version so Tampermonkey detects the latest side-rail and encoding fixes.
+
 ## 0.7.2
 
 - Added drag-and-drop ordering for detail sections
