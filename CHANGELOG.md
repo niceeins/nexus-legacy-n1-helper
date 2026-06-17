@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.11
+
+- Respect a busy Research queue when cached research cards show `Research in progress`.
+- Avoid adding research start actions to the session plan while another research is already running.
+
 ## 0.7.10
 
 - Avoid recommending blocked building upgrades as the primary action when the queue is full.

@@ -44,8 +44,8 @@ function loadParserSandbox() {
   return sandbox;
 }
 
-includes('@version      0.7.10', 'userscript header version should be 0.7.10');
-includes('<span class="nlh-version">v0.7.10</span>', 'panel version should be v0.7.10');
+includes('@version      0.7.11', 'userscript header version should be 0.7.11');
+includes('<span class="nlh-version">v0.7.11</span>', 'panel version should be v0.7.11');
 
 [
   'function getBuildingAdvisor(resources, buildings, researchItems, fleetState)',
@@ -93,6 +93,13 @@ includes('<span class="nlh-version">v0.7.10</span>', 'panel version should be v0
   'function buildGlobalRecommendations(resources, buildings, researchItems, fleetState, buildingAdvisor, nextActionPlanner)',
   'function sortRecommendations(recommendations)',
   'function isUsablePrimaryItem(item)',
+  'function isResearchQueueBusy(researchItems)',
+  'const researchQueueBusy = isResearchQueueBusy(researchItems)',
+  '!researchQueueBusy && anomaly.startable',
+  '!researchQueueBusy && basicSensors.startable',
+  '!researchQueueBusy && researchPlan.nextResearch?.startable',
+  "action.kind === 'research' && researchQueueBusy",
+  "actionState = 'Forschung läuft'",
   'buildingAdvisor.recommended && isUsablePrimaryItem(buildingAdvisor.recommended)',
   'fleetState.free > 0',
   'Fleet Slot nutzen',
@@ -264,4 +271,4 @@ includes("defaultOpen: false,\n        badge: buildingAdvisor.recommended", 'bui
 const bodyRenderMatches = source.match(/panel\.querySelector\('\.nlh-body'\)\.innerHTML =/g) || [];
 assert.strictEqual(bodyRenderMatches.length, 1, 'render should assign .nlh-body innerHTML once');
 
-console.log('v0.7.10 planner source checks passed');
+console.log('v0.7.11 planner source checks passed');

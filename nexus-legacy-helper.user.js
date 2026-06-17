@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nexus Legacy Helper
 // @namespace    https://niceeins.local/
-// @version      0.7.10
+// @version      0.7.11
 // @description  Passive guide-based helper for Nexus Legacy: resources, build/research hints, affordability, wait times, research/fleet cache. No automation.
 // @match        https://*.nexuslegacy.space/*
 // @match        https://nexuslegacy.space/*
@@ -261,7 +261,7 @@
   function captureDomDump() {
     const key = location.pathname + location.search;
     const dump = {
-      version: '0.7.10',
+      version: '0.7.11',
       capturedAt: new Date().toISOString(),
       path: key,
       title: document.title,
@@ -291,7 +291,7 @@
 
   function getDomDumpPayload() {
     return {
-      version: '0.7.10',
+      version: '0.7.11',
       exportedAt: new Date().toISOString(),
       pages: getAllDomDumps()
     };
@@ -1336,6 +1336,10 @@
     return true;
   }
 
+  function isResearchQueueBusy(researchItems) {
+    return researchItems.some(item => /Research in progress|Forschung läuft/i.test(item.buttonText || ''));
+  }
+
   function confidenceFromData(blockers, secondaryActions) {
     const dataHints = [...blockers, ...secondaryActions].filter(item => /Daten|öffnen|Cache|Branch/i.test(item));
     if (!dataHints.length) return 'Hoch';
@@ -1481,6 +1485,7 @@
   function buildNextActionPlanner(resources, buildings, researchItems, fleetState, goalState, buildingAdvisor) {
     const energy = getEnergy(resources);
     const researchPlan = buildResearchDependencyPlan('Anomaly Scanning', researchItems, buildings);
+    const researchQueueBusy = isResearchQueueBusy(researchItems);
     const secondaryActions = [];
     const blockers = [];
     const lab = labLevel(buildings) || 0;
@@ -1503,7 +1508,7 @@
       blockers.push('Fleet-/Mining-Seite öffnen, weil Mining-Daten fehlen.');
     }
 
-    if (anomaly.startable) {
+    if (!researchQueueBusy && anomaly.startable) {
       primaryAction = 'Anomaly Scanning starten';
       primaryItem = anomaly.item;
       explanation = 'Das Zielresearch ist sichtbar startbar und hat höchste Priorität.';
@@ -1515,11 +1520,11 @@
       primaryAction = 'Research Lab auf Lv3 bringen';
       primaryItem = labBuilding;
       explanation = 'Research Lab Lv3 ist zentral für den Anomaly-Scanning-Pfad.';
-    } else if (basicSensors.startable) {
+    } else if (!researchQueueBusy && basicSensors.startable) {
       primaryAction = 'Basic Sensors starten';
       primaryItem = basicSensors.item;
       explanation = 'Basic Sensors ist ein früher Schlüssel im Anomaly-Scanning-Pfad.';
-    } else if (researchPlan.nextResearch?.startable) {
+    } else if (!researchQueueBusy && researchPlan.nextResearch?.startable) {
       primaryAction = `${researchPlan.nextResearch.name} starten`;
       primaryItem = researchPlan.nextResearch.item;
       explanation = 'Das nächste sichtbare Research im Dependency-Plan ist startbar.';
@@ -1561,6 +1566,7 @@
 
   function buildSessionPlan(resources, buildings, researchItems, fleetState, nextActionPlanner, buildingAdvisor) {
     const actionList = actions(resources, buildings, researchItems);
+    const researchQueueBusy = isResearchQueueBusy(researchItems);
     const now = [];
     const next30 = [];
     const next60 = [];
@@ -1570,7 +1576,7 @@
     if (nextActionPlanner.primaryAction) now.push(nextActionPlanner.primaryAction);
 
     for (const action of actionList) {
-      if (action.actionState === 'jetzt möglich' || action.actionState === 'startbar') {
+      if ((action.actionState === 'jetzt möglich' || action.actionState === 'startbar') && !(action.kind === 'research' && researchQueueBusy)) {
         now.push(`${action.name} ${action.kind === 'research' ? 'starten' : 'bauen/upgrade prüfen'}`);
       } else if (action.affordability?.waitHours <= 0.5) {
         next30.push(`${action.name}: ${action.affordability.waitText}`);
@@ -1592,7 +1598,7 @@
     if (buildingAdvisor.recommended?.affordability?.waitHours <= 2 && buildingAdvisor.recommended.actionState !== 'jetzt möglich') {
       idleRisks.push('Build queue frei halten: gutes Gebäude bald bezahlbar');
     }
-    if (researchItems.some(item => item.isStartable)) idleRisks.push('Research sichtbar startbar, aber nicht gestartet');
+    if (!researchQueueBusy && researchItems.some(item => item.isStartable)) idleRisks.push('Research sichtbar startbar, aber nicht gestartet');
 
     return {
       now: [...new Set(now)].slice(0, 6),
@@ -1627,7 +1633,7 @@
     const parserDiagnostics = getParserDiagnostics();
 
     return {
-      version: '0.7.10',
+      version: '0.7.11',
       path: location.pathname + location.search,
       currentTab: parserDiagnostics.currentTab,
       cachedBranches,
@@ -1770,8 +1776,11 @@
   }
 
   function actions(resources, buildings, research) {
+    const researchQueueBusy = isResearchQueueBusy(research);
+
     return [...research, ...buildings]
       .map(item => {
+        const action = item;
         const ranking = rank(item, resources, buildings);
         const aff = affordability(item, resources);
 
@@ -1781,6 +1790,8 @@
           actionState = 'läuft';
         } else if (item.isBlocked) {
           actionState = 'blockiert';
+        } else if (action.kind === 'research' && researchQueueBusy) {
+          actionState = 'Forschung läuft';
         } else if (aff.affordable === true && item.isStartable) {
           actionState = 'jetzt möglich';
         } else if (aff.affordable === false) {
@@ -2162,7 +2173,7 @@
       <div class="nlh-header">
         <div class="nlh-title">
           <strong>Nexus Helper</strong>
-          <span class="nlh-version">v0.7.10</span>
+          <span class="nlh-version">v0.7.11</span>
         </div>
         <div class="nlh-rail-status"></div>
         <div class="nlh-actions">
