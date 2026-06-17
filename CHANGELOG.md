@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.7.9
+
+- Hardened global recommendation state so tips no longer depend as strongly on the active tab.
+- Fixed false Fleet Slot parsing such as `59229/3`.
+- Hardened Research Lab level parsing to avoid merged DOM-number artifacts.
+- Changed Mining status handling so non-fleet tabs show `unknown` instead of false negatives.
+- Improved cache freshness display and debug parser diagnostics.
+- Extended smoke checks for passive-helper safety and parser edge cases.
+
 ## 0.7.8
 
 - Reworked the top overlay into a single Command Center with one primary action.

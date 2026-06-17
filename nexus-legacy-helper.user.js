@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nexus Legacy Helper
 // @namespace    https://niceeins.local/
-// @version      0.7.8
+// @version      0.7.9
 // @description  Passive guide-based helper for Nexus Legacy: resources, build/research hints, affordability, wait times, research/fleet cache. No automation.
 // @match        https://*.nexuslegacy.space/*
 // @match        https://nexuslegacy.space/*
@@ -19,6 +19,22 @@
   const SNAPSHOT_KEY = 'nexusLegacyHelper.v041.snapshots';
   const DOM_DUMP_KEY = 'nexusLegacyHelper.v041.domDumps';
   const GUIDE = 'Determinator Beginner Guide';
+  const CACHE_TTL = {
+    resources: 2 * 60 * 1000,
+    fleet: 5 * 60 * 1000,
+    mining: 5 * 60 * 1000,
+    research: 30 * 60 * 1000,
+    buildings: 30 * 60 * 1000,
+    shipyard: 30 * 60 * 1000,
+    levels: 24 * 60 * 60 * 1000
+  };
+
+  const SEVERITY_RANK = {
+    critical: 4,
+    high: 3,
+    medium: 2,
+    info: 1
+  };
 
   const GUIDE_TECH_ORDER = [
     'Basic Sensors',
@@ -118,8 +134,10 @@
   function getSnapshots() {
     return loadJson(SNAPSHOT_KEY, {
       researchByBranch: {},
+      researchUpdatedAt: {},
       buildings: [],
       fleet: null,
+      cache: {},
       updatedAt: null
     });
   }
@@ -127,6 +145,76 @@
   function saveSnapshots(snapshots) {
     snapshots.updatedAt = Date.now();
     saveJson(SNAPSHOT_KEY, snapshots);
+  }
+
+  function cacheMeta(section, updatedAt) {
+    const stale = isCacheStale(section, updatedAt);
+
+    return {
+      section,
+      updatedAt: updatedAt || null,
+      age: relativeTime(updatedAt),
+      stale,
+      confidence: updatedAt ? (stale ? 0.45 : 0.85) : 0.2
+    };
+  }
+
+  function isCacheStale(section, updatedAt) {
+    if (!updatedAt) return true;
+    return Date.now() - updatedAt > (CACHE_TTL[section] || 0);
+  }
+
+  function markCacheUpdate(snapshots, section) {
+    snapshots.cache = snapshots.cache || {};
+    snapshots.cache[section] = {
+      updatedAt: Date.now()
+    };
+  }
+
+  function getCacheUpdatedAt(snapshots, section) {
+    return snapshots?.cache?.[section]?.updatedAt || null;
+  }
+
+  function getParserDiagnostics() {
+    if (!window.__nlhParserDiagnostics) {
+      window.__nlhParserDiagnostics = {
+        currentTab: null,
+        fleetSlotCandidates: [],
+        rejectedFleetSlotCandidates: [],
+        researchLabLevelCandidates: [],
+        rejectedLevelCandidates: [],
+        finalRecommendationsBeforeSort: [],
+        finalTopRecommendation: null
+      };
+    }
+
+    return window.__nlhParserDiagnostics;
+  }
+
+  function resetParserDiagnostics() {
+    window.__nlhParserDiagnostics = {
+      currentTab: currentTabLabel(),
+      fleetSlotCandidates: [],
+      rejectedFleetSlotCandidates: [],
+      researchLabLevelCandidates: [],
+      rejectedLevelCandidates: [],
+      finalRecommendationsBeforeSort: [],
+      finalTopRecommendation: null
+    };
+  }
+
+  function currentTabLabel() {
+    const path = location.pathname || '';
+    if (isMiningContext(path)) return 'fleet/mining';
+    if (path.includes('/research')) return 'research';
+    if (path.includes('/buildings')) return 'buildings';
+    if (path.includes('/shipyard')) return 'shipyard';
+    if (path.includes('/overview')) return 'overview';
+    return path || 'unknown';
+  }
+
+  function isMiningContext(path) {
+    return /\/(fleet|mining|missions|overview)\b/i.test(path || '');
   }
 
   function getAllDomDumps() {
@@ -173,7 +261,7 @@
   function captureDomDump() {
     const key = location.pathname + location.search;
     const dump = {
-      version: '0.7.8',
+      version: '0.7.9',
       capturedAt: new Date().toISOString(),
       path: key,
       title: document.title,
@@ -203,7 +291,7 @@
 
   function getDomDumpPayload() {
     return {
-      version: '0.7.8',
+      version: '0.7.9',
       exportedAt: new Date().toISOString(),
       pages: getAllDomDumps()
     };
@@ -348,6 +436,74 @@
     }
 
     return null;
+  }
+
+  function parseFleetSlotsSafe(text) {
+    if (!text || typeof text !== 'string') return null;
+
+    const normalized = text.replace(/\s+/g, ' ').trim();
+    const match = normalized.match(/\b(?:fleet\s*slots?|fleets?)?\s*:?\s*(\d{1,2})\s*\/\s*(\d{1,2})\b/i);
+    const diagnostics = getParserDiagnostics();
+
+    if (!match) {
+      const longFraction = normalized.match(/\b\d{3,}\s*\/\s*\d{1,2}\b/);
+      if (longFraction) {
+        diagnostics.rejectedFleetSlotCandidates.push({
+          text: longFraction[0],
+          reason: 'left side too long'
+        });
+      }
+      return null;
+    }
+
+    const used = Number(match[1]);
+    const max = Number(match[2]);
+
+    if (!Number.isInteger(used) || !Number.isInteger(max)) {
+      diagnostics.rejectedFleetSlotCandidates.push({ text: match[0], reason: 'not integer' });
+      return null;
+    }
+    if (max <= 0 || max > 20) {
+      diagnostics.rejectedFleetSlotCandidates.push({ text: match[0], reason: 'max out of range' });
+      return null;
+    }
+    if (used < 0 || used > max) {
+      diagnostics.rejectedFleetSlotCandidates.push({ text: match[0], reason: 'used > max' });
+      return null;
+    }
+
+    const candidate = {
+      active: used,
+      max,
+      free: max - used,
+      usedSlots: used,
+      maxSlots: max,
+      freeSlots: max - used,
+      text: match[0],
+      score: /fleet/i.test(match[0]) ? 20 : 10
+    };
+    diagnostics.fleetSlotCandidates.push(candidate);
+    return candidate;
+  }
+
+  function chooseFleetSlotCandidate(candidates) {
+    const valid = (candidates || []).filter(candidate =>
+      candidate &&
+      Number.isInteger(candidate.active) &&
+      Number.isInteger(candidate.max) &&
+      candidate.max > 0 &&
+      candidate.max <= 20 &&
+      candidate.active >= 0 &&
+      candidate.active <= candidate.max
+    );
+
+    if (!valid.length) return null;
+
+    return valid.sort((a, b) =>
+      (b.score || 0) - (a.score || 0) ||
+      b.max - a.max ||
+      a.active - b.active
+    )[0];
   }
 
   function getResources() {
@@ -586,6 +742,8 @@
         ? cachedCurrent
         : mergeByName([...(snapshots.buildings || []), ...cachedCurrent]);
 
+      markCacheUpdate(snapshots, 'buildings');
+      markCacheUpdate(snapshots, 'levels');
       saveSnapshots(snapshots);
     }
 
@@ -599,30 +757,85 @@
     return buildings.find(b => norm(b.name) === norm(name))?.level || 0;
   }
 
-  function labLevel(buildings) {
-    const hero = document.querySelector('.res-hero-sub')?.textContent || '';
-    const heroMatch = hero.match(/\bLab\s+Lv\.?\s*(\d{1,2})\b/i);
+  function parseLevelFromLabel(text, labels, options = {}) {
+    if (!text || typeof text !== 'string') return null;
 
-    if (heroMatch) {
-      return parseInt(heroMatch[1], 10);
+    const normalized = text.replace(/\s+/g, ' ').trim();
+    const diagnostics = getParserDiagnostics();
+    const safeLabels = labels
+      .filter(label => label !== 'Lab' || options.allowShortLab)
+      .map(label => label.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+    const labelPattern = safeLabels.join('|');
+
+    if (!labelPattern) return null;
+
+    const regex = new RegExp(`(?:${labelPattern}).{0,40}\\b(?:level|lvl|lv\\.?|stufe)\\s*:?\\s*(\\d{1,2})\\b`, 'i');
+    const match = normalized.match(regex);
+
+    if (!match) {
+      const rejected = normalized.match(/\b(?:Research Lab|Research Laboratory|Forschungslabor|Lab).{0,40}\b(?:level|lvl|lv\.?|stufe)\s*:?\s*(\d{3,})\b/i);
+      if (rejected) {
+        diagnostics.rejectedLevelCandidates.push({
+          text: rejected[0],
+          reason: 'level too long'
+        });
+      }
+      return null;
+    }
+
+    const level = Number(match[1]);
+    if (!Number.isInteger(level) || level < 0 || level > 99) {
+      diagnostics.rejectedLevelCandidates.push({
+        text: match[0],
+        reason: 'level > 99'
+      });
+      return null;
+    }
+
+    diagnostics.researchLabLevelCandidates.push({
+      text: match[0],
+      level,
+      labels: ['Research Lab', 'Research Laboratory', 'Forschungslabor', 'Lab']
+    });
+    return level;
+  }
+
+  function labLevel(buildings) {
+    const researchLabLabels = [
+      'Research Lab',
+      'Research Laboratory',
+      'Forschungslabor',
+      'Lab'
+    ];
+    const hero = document.querySelector('.res-hero-sub')?.textContent || '';
+    const heroLevel = parseLevelFromLabel(hero, researchLabLabels, { allowShortLab: true });
+
+    if (heroLevel != null) {
+      return heroLevel;
     }
 
     const labCard = [...document.querySelectorAll('.building-card')]
       .find(card => /^Research Lab\b/i.test(card.querySelector('.building-name')?.textContent?.trim() || ''));
 
-    const labCardMatch = labCard?.querySelector('.building-level')?.textContent?.match(/\bLv\.?\s*(\d{1,2})\b/i);
+    const labCardText = labCard
+      ? `${labCard.querySelector('.building-name')?.textContent || 'Research Lab'} ${labCard.querySelector('.building-level')?.textContent || ''}`
+      : '';
+    const labCardLevel = parseLevelFromLabel(labCardText, researchLabLabels, { allowShortLab: true });
 
-    if (labCardMatch) {
-      return parseInt(labCardMatch[1], 10);
+    if (labCardLevel != null) {
+      return labCardLevel;
     }
 
     const overviewLab = [...document.querySelectorAll('.ov-bld-card')]
       .find(card => /Research Lab/i.test(card.textContent || ''));
 
-    const overviewMatch = overviewLab?.querySelector('.lvl')?.textContent?.match(/\bLv\.?\s*(\d{1,2})\b/i);
+    const overviewText = overviewLab
+      ? `${overviewLab.textContent || 'Research Lab'} ${overviewLab.querySelector('.lvl')?.textContent || ''}`
+      : '';
+    const overviewLevel = parseLevelFromLabel(overviewText, researchLabLabels, { allowShortLab: true });
 
-    if (overviewMatch) {
-      return parseInt(overviewMatch[1], 10);
+    if (overviewLevel != null) {
+      return overviewLevel;
     }
 
     const parsed = buildingLevel(buildings, 'Research Lab');
@@ -689,10 +902,14 @@
     const snapshots = getSnapshots();
 
     if (current.length) {
-      snapshots.researchByBranch[currentResearchBranch()] = current.map(item => ({
+      const branch = currentResearchBranch();
+      snapshots.researchByBranch[branch] = current.map(item => ({
         ...item,
         fromCache: true
       }));
+      snapshots.researchUpdatedAt = snapshots.researchUpdatedAt || {};
+      snapshots.researchUpdatedAt[branch] = Date.now();
+      markCacheUpdate(snapshots, 'research');
 
       saveSnapshots(snapshots);
     }
@@ -706,51 +923,72 @@
   function fleetState() {
     const path = location.pathname;
     const text = document.body.textContent || '';
+    const miningContext = isMiningContext(path);
+    const slotCandidates = [];
 
     let active = null;
     let max = null;
 
     const title = document.querySelector('.fleet-missions-card h3')?.textContent || '';
-    const titleMatch = title.match(/Fleet Missions\s*\((\d{1,2})\s*\/\s*(\d{1,2})\)/i);
+    const titleCandidate = parseFleetSlotsSafe(title);
 
-    if (titleMatch) {
-      active = parseInt(titleMatch[1], 10);
-      max = parseInt(titleMatch[2], 10);
+    if (titleCandidate) {
+      slotCandidates.push({ ...titleCandidate, score: titleCandidate.score + 30, source: 'fleet-title' });
     }
 
-    if (active == null) {
-      const fleetLink = [...document.querySelectorAll('.sidebar-link')]
-        .find(link => link.querySelector('.sidebar-link-label')?.textContent?.trim() === 'Fleet');
+    const fleetLink = [...document.querySelectorAll('.sidebar-link')]
+      .find(link => link.querySelector('.sidebar-link-label')?.textContent?.trim() === 'Fleet');
+    const badge = fleetLink?.querySelector('.sidebar-badge')?.textContent?.trim();
 
-      const badge = fleetLink?.querySelector('.sidebar-badge')?.textContent?.trim();
+    if (badge && /^\d{1,2}$/.test(badge)) {
+      const badgeActive = parseInt(badge, 10);
+      slotCandidates.push({
+        active: badgeActive,
+        max: 3,
+        free: Math.max(0, 3 - badgeActive),
+        usedSlots: badgeActive,
+        maxSlots: 3,
+        freeSlots: Math.max(0, 3 - badgeActive),
+        text: badge,
+        score: 5,
+        source: 'sidebar-badge'
+      });
+    }
 
-      if (badge && /^\d{1,2}$/.test(badge)) {
-        active = parseInt(badge, 10);
-        max = 3;
+    if (miningContext) {
+      const scopedText = document.querySelector('.fleet-missions-card,.fleet-page,.fleet-section,.missions-list')?.textContent || '';
+      const scopedCandidate = parseFleetSlotsSafe(scopedText) || parseSmallFraction(scopedText);
+
+      if (scopedCandidate) {
+        slotCandidates.push({
+          ...scopedCandidate,
+          free: Math.max(0, scopedCandidate.max - scopedCandidate.active),
+          usedSlots: scopedCandidate.active,
+          maxSlots: scopedCandidate.max,
+          freeSlots: Math.max(0, scopedCandidate.max - scopedCandidate.active),
+          text: scopedCandidate.text || 'scoped fraction',
+          score: (scopedCandidate.score || 0) + 15,
+          source: 'fleet-scope'
+        });
       }
     }
 
-    if (
-      (path.includes('/fleet') || path.includes('/overview') || path.includes('/mining')) &&
-      (active == null || max == null)
-    ) {
-      const fraction = parseSmallFraction(
-        document.querySelector('.fleet-missions-card,.fleet-page,.fleet-section,.missions-list')?.textContent || ''
-      );
-
-      if (fraction) {
-        active = fraction.active;
-        max = fraction.max;
-      }
+    const chosen = chooseFleetSlotCandidate(slotCandidates);
+    if (chosen) {
+      active = chosen.active;
+      max = chosen.max;
     }
 
-    let hasMining =
-      !!document.querySelector('.mission-card.status-mining') ||
-      [...document.querySelectorAll('.ov-mission-card,[class*="mission-card"]')]
-        .some(card => /\bMining\b/i.test(card.textContent || ''));
+    let miningStatus = 'unknown';
+    let hasMining = false;
 
-    if (!hasMining && (path.includes('/fleet') || path.includes('/overview') || path.includes('/mining'))) {
-      hasMining = /Mining Mission|status-mining|⛏ Mining|\bMining\b/i.test(text);
+    if (miningContext) {
+      hasMining =
+        !!document.querySelector('.mission-card.status-mining') ||
+        [...document.querySelectorAll('.ov-mission-card,[class*="mission-card"]')]
+          .some(card => /\bMining\b/i.test(card.textContent || '')) ||
+        /Mining Mission|status-mining|\bMining\b/i.test(text);
+      miningStatus = hasMining ? 'active' : 'none';
     }
 
     let result = {
@@ -758,25 +996,33 @@
       max: Number.isFinite(max) ? max : null,
       free: Number.isFinite(active) && Number.isFinite(max) ? Math.max(0, max - active) : null,
       hasMining,
+      miningStatus,
       fromCache: false
     };
 
     const snapshots = getSnapshots();
 
-    if (path.includes('/fleet') || path.includes('/overview') || path.includes('/mining')) {
+    if (isMiningContext(path)) {
       if (result.max && result.max <= 20 && result.active >= 0 && result.active <= result.max) {
         snapshots.fleet = {
           ...result,
           fromCache: true,
-          cachedAt: Date.now()
+          cachedAt: Date.now(),
+          updatedAt: Date.now()
         };
+        markCacheUpdate(snapshots, 'fleet');
+        markCacheUpdate(snapshots, 'mining');
 
         saveSnapshots(snapshots);
       }
     } else if (snapshots.fleet) {
+      const stale = isCacheStale('fleet', snapshots.fleet.updatedAt || snapshots.fleet.cachedAt);
       result = {
         ...snapshots.fleet,
-        fromCache: true
+        fromCache: true,
+        stale,
+        miningStatus: stale ? 'unknown' : (snapshots.fleet.miningStatus || (snapshots.fleet.hasMining ? 'active' : 'none')),
+        hasMining: stale ? false : !!snapshots.fleet.hasMining
       };
     }
 
@@ -933,9 +1179,11 @@
   }
 
   function buildGuideChecklist(resources, buildings, researchItems, fleetState) {
-    const mining = fleetState.hasMining
+    const mining = fleetState.miningStatus === 'active'
       ? { state: 'erledigt', tone: 'good' }
-      : { state: 'nicht erkannt', tone: 'danger' };
+      : fleetState.miningStatus === 'none'
+        ? { state: 'keine aktive Mission', tone: 'warn' }
+        : { state: 'unbekannt', tone: 'warn' };
 
     const fleetSlots = fleetState.max != null
       ? { state: `geprüft ${fleetState.active}/${fleetState.max}`, tone: 'good' }
@@ -1087,6 +1335,141 @@
     return 'Niedrig';
   }
 
+  function sourceFreshnessScore(source) {
+    const snapshots = getSnapshots();
+    const sections = Array.isArray(source) ? source : [source];
+    let best = 0;
+
+    for (const item of sections) {
+      const section = String(item || '').replace(/-cache|-state/g, '');
+      const updatedAt = getCacheUpdatedAt(snapshots, section);
+      if (!updatedAt) continue;
+      best = Math.max(best, isCacheStale(section, updatedAt) ? 0.25 : 1);
+    }
+
+    return best;
+  }
+
+  function sortRecommendations(recommendations) {
+    return [...recommendations].sort((a, b) =>
+      (SEVERITY_RANK[b.severity] || 0) - (SEVERITY_RANK[a.severity] || 0) ||
+      (b.score || 0) - (a.score || 0) ||
+      (b.confidence || 0) - (a.confidence || 0) ||
+      sourceFreshnessScore(b.source) - sourceFreshnessScore(a.source)
+    );
+  }
+
+  function buildGlobalRecommendations(resources, buildings, researchItems, fleetState, buildingAdvisor, nextActionPlanner) {
+    const recommendations = [];
+    const snapshots = getSnapshots();
+    const energy = getEnergy(resources);
+    const researchKnown = researchItems.length > 0;
+    const researchStartable = researchItems.some(item => item.isStartable);
+    const buildingRunning = buildings.some(building => building.isUpgrading);
+    const storageSoonFull = resources.some(resource => resource.name !== 'Energy' && soonFull(resource.storageFullIn));
+
+    if (researchKnown && !researchStartable) {
+      recommendations.push({
+        id: 'empty_research_queue',
+        severity: 'critical',
+        score: 100,
+        title: 'Forschung ist leer',
+        message: 'Starte eine Forschung. Forschung sollte dauerhaft laufen.',
+        source: ['research-cache', 'global-state'],
+        confidence: cacheMeta('research', getCacheUpdatedAt(snapshots, 'research')).confidence
+      });
+    }
+
+    if (!buildingRunning && buildingAdvisor.recommended) {
+      recommendations.push({
+        id: 'empty_build_queue',
+        severity: 'critical',
+        score: 92,
+        title: 'Gebaeude-Queue ist frei',
+        message: `${buildingAdvisor.recommended.name} auf Lv${buildingAdvisor.recommended.targetLevel} pruefen.`,
+        source: ['buildings-cache', 'global-state'],
+        confidence: cacheMeta('buildings', getCacheUpdatedAt(snapshots, 'buildings')).confidence
+      });
+    }
+
+    if (energy && energy.free < 0) {
+      recommendations.push({
+        id: 'negative_energy',
+        severity: 'critical',
+        score: 98,
+        title: 'Energie negativ',
+        message: 'Solar Plant oder Energieversorgung priorisieren.',
+        source: ['resources-cache', 'global-state'],
+        confidence: 0.9
+      });
+    }
+
+    if (storageSoonFull) {
+      recommendations.push({
+        id: 'storage_near_cap',
+        severity: 'critical',
+        score: 88,
+        title: 'Ressourcen nahe Storage-Cap',
+        message: 'Ressourcen ausgeben oder Storage-Ausbau pruefen.',
+        source: ['resources-cache', 'global-state'],
+        confidence: 0.8
+      });
+    }
+
+    if (fleetState.free > 0) {
+      recommendations.push({
+        id: 'fleet_slots_available',
+        severity: 'high',
+        score: 80 + fleetState.free,
+        title: 'Fleet-Slot frei',
+        message: `${fleetState.free}/${fleetState.max} Slots frei. Mining, Scouting oder Salvage pruefen.`,
+        source: ['fleet-cache', 'global-state'],
+        confidence: fleetState.stale ? 0.45 : 0.85
+      });
+    }
+
+    if (fleetState.miningStatus === 'none') {
+      recommendations.push({
+        id: 'mining_possible_none_active',
+        severity: 'high',
+        score: 78,
+        title: 'Keine Mining-Mission aktiv',
+        message: 'Mining ist auf Fleet/Missions geprueft und aktuell nicht aktiv.',
+        source: ['mining-cache', 'global-state'],
+        confidence: 0.8
+      });
+    } else if (fleetState.miningStatus === 'unknown') {
+      recommendations.push({
+        id: 'mining_unknown',
+        severity: 'info',
+        score: 35,
+        title: 'Mining unbekannt',
+        message: 'Fleet/Missions-Tab noch nicht aktuell gescannt.',
+        source: ['mining-cache', 'global-state'],
+        confidence: 0.25
+      });
+    }
+
+    if (nextActionPlanner.primaryAction) {
+      recommendations.push({
+        id: 'planner_primary_action',
+        severity: 'medium',
+        score: 60,
+        title: nextActionPlanner.primaryAction,
+        message: nextActionPlanner.explanation,
+        source: ['global-state'],
+        confidence: nextActionPlanner.confidence === 'Hoch' ? 0.9 : nextActionPlanner.confidence === 'Mittel' ? 0.65 : 0.4
+      });
+    }
+
+    const sorted = sortRecommendations(recommendations);
+    const diagnostics = getParserDiagnostics();
+    diagnostics.finalRecommendationsBeforeSort = recommendations;
+    diagnostics.finalTopRecommendation = sorted[0] || null;
+
+    return sorted;
+  }
+
   function buildNextActionPlanner(resources, buildings, researchItems, fleetState, goalState, buildingAdvisor) {
     const energy = getEnergy(resources);
     const researchPlan = buildResearchDependencyPlan('Anomaly Scanning', researchItems, buildings);
@@ -1106,9 +1489,9 @@
 
     if (!buildings.length) blockers.push('Buildings-Seite öffnen, damit Level, Kosten und Wartezeiten sichtbar sind.');
 
-    if (!fleetState.hasMining && fleetState.max != null) {
+    if (fleetState.miningStatus === 'none' && fleetState.max != null) {
       secondaryActions.push('Mining prüfen, weil kein Mining erkannt wurde.');
-    } else if (!fleetState.hasMining) {
+    } else if (fleetState.miningStatus === 'unknown') {
       blockers.push('Fleet-/Mining-Seite öffnen, weil Mining-Daten fehlen.');
     }
 
@@ -1136,9 +1519,12 @@
       primaryAction = `${buildingAdvisor.recommended.name} auf Lv${buildingAdvisor.recommended.targetLevel} bringen`;
       primaryItem = buildingAdvisor.recommended;
       explanation = buildingAdvisor.recommended.reason || explanation;
-    } else if (!fleetState.hasMining) {
+    } else if (fleetState.miningStatus === 'none') {
       primaryAction = 'Mining prüfen, weil kein Mining erkannt wurde';
       explanation = 'Frühes Mining ist guide-relevant, aber aktuell nicht sicher erkannt.';
+    } else if (fleetState.miningStatus === 'unknown') {
+      primaryAction = 'Mining unbekannt - Fleet/Missions-Tab noch nicht aktuell gescannt';
+      explanation = 'Mining-Daten fehlen im globalen Cache oder sind stale; aktueller Tab wird nicht als Gegenbeweis genutzt.';
     } else {
       const first = actionList[0];
       primaryAction = first ? `${first.name} prüfen` : goalState.nextStep;
@@ -1182,7 +1568,8 @@
       }
     }
 
-    if (!fleetState.hasMining) now.push('Mining prüfen');
+    if (fleetState.miningStatus === 'none') now.push('Mining prüfen');
+    if (fleetState.miningStatus === 'unknown') now.push('Fleet/Missions für Mining-Status öffnen');
     for (const hint of getCachedBranches().filter(branch => !branch.cached)) now.push(`${hint.label} Research-Branch öffnen`);
 
     const energy = getEnergy(resources);
@@ -1211,27 +1598,42 @@
     return `vor ${Math.floor(minutes / 60)}h`;
   }
 
-  function buildDataQuality(resources, buildings, researchItems, fleet, nextAction, buildingAdvisor) {
+  function buildDataQuality(resources, buildings, researchItems, fleet, nextAction, buildingAdvisor, recommendations = []) {
     const snapshots = getSnapshots();
     const cachedBranches = getCachedBranches();
     const domDumpPages = Object.keys(getAllDomDumps()).sort();
+    const cacheAges = {
+      resources: cacheMeta('resources', getCacheUpdatedAt(snapshots, 'resources')),
+      fleet: cacheMeta('fleet', getCacheUpdatedAt(snapshots, 'fleet')),
+      mining: cacheMeta('mining', getCacheUpdatedAt(snapshots, 'mining')),
+      research: cacheMeta('research', getCacheUpdatedAt(snapshots, 'research')),
+      buildings: cacheMeta('buildings', getCacheUpdatedAt(snapshots, 'buildings')),
+      shipyard: cacheMeta('shipyard', getCacheUpdatedAt(snapshots, 'shipyard')),
+      levels: cacheMeta('levels', getCacheUpdatedAt(snapshots, 'levels'))
+    };
+    const parserDiagnostics = getParserDiagnostics();
 
     return {
-      version: '0.7.8',
+      version: '0.7.9',
       path: location.pathname + location.search,
+      currentTab: parserDiagnostics.currentTab,
       cachedBranches,
       domDumpPages,
       buildingsCached: Array.isArray(snapshots.buildings) && snapshots.buildings.length > 0,
       fleetCached: !!snapshots.fleet,
       miningDetected: !!fleet.hasMining,
+      miningStatus: fleet.miningStatus || 'unknown',
       lastUpdated: relativeTime(snapshots.updatedAt),
+      cacheAges,
       buildingsCount: buildings.length,
       researchCount: researchItems.length,
       fleetState: fleet,
       resources,
       labLevel: labLevel(buildings),
       nextAction: nextAction.primaryAction,
-      buildingRecommendation: buildingAdvisor.recommended?.name || null
+      buildingRecommendation: buildingAdvisor.recommended?.name || null,
+      recommendations,
+      parserDiagnostics
     };
   }
 
@@ -1449,7 +1851,7 @@
         netNumber: alloys.netNumber
       },
       currentGoal: anomaly.done ? 'sentinel_setup' : 'anomaly_scanning',
-      hasMining: !!fleetState.hasMining,
+      hasMining: fleetState.miningStatus === 'active',
       anomalyScanningDone: anomaly.done,
       anomalyScanningSeen: !!anomaly.item,
       anyStorageSoonFull: resources.some(resource => resource.name !== 'Energy' && soonFull(resource.storageFullIn))
@@ -1502,7 +1904,7 @@
       notes.push('Gebäudekosten nicht sichtbar. Öffne /buildings für genaue Wartezeiten.');
     }
 
-    if (!fleetState.hasMining) {
+    if (fleetState.miningStatus !== 'active') {
       notes.push('Mining ist nicht sicher erkannt; Fleet-/Mining-Seite gelegentlich öffnen.');
     }
 
@@ -1686,19 +2088,29 @@
       output.push({
         type: 'warn',
         title: `${fleet.free} Fleet-Slot${fleet.free === 1 ? '' : 's'} frei`,
-        text: fleet.hasMining
+        text: fleet.miningStatus === 'active'
           ? 'Mining läuft. Freie Slots für Scouting/weitere Missionen prüfen.'
-          : 'Keine Mining-Mission erkannt. Salvaged Freighters früh fürs Mining nutzen.'
+          : fleet.miningStatus === 'none'
+            ? 'Keine Mining-Mission erkannt. Salvaged Freighters früh fürs Mining nutzen.'
+            : 'Mining unbekannt - Fleet/Missions-Tab noch nicht aktuell gescannt.'
       });
     }
 
-    if (!fleet.hasMining) {
+    if (fleet.miningStatus === 'none') {
       output.push({
         type: 'danger',
         title: 'Keine Mining-Mission erkannt',
         text: fleet.fromCache
           ? 'Auch im gespeicherten Fleet-Status wurde keine Mining-Mission erkannt.'
           : 'Der Guide empfiehlt frühes Mining im Heimatsystem.'
+      });
+    }
+
+    if (fleet.miningStatus === 'unknown') {
+      output.push({
+        type: 'warn',
+        title: 'Mining unbekannt',
+        text: 'Fleet/Missions-Tab noch nicht aktuell gescannt.'
       });
     }
 
@@ -1737,7 +2149,7 @@
       <div class="nlh-header">
         <div class="nlh-title">
           <strong>Nexus Helper</strong>
-          <span class="nlh-version">v0.7.8</span>
+          <span class="nlh-version">v0.7.9</span>
         </div>
         <div class="nlh-rail-status"></div>
         <div class="nlh-actions">
@@ -2634,7 +3046,7 @@
     const items = [
       ['Lab', currentStatus.lab ? `Lv.${currentStatus.lab}` : '?'],
       ['Fleet', fleet.max != null ? `${fleet.active}/${fleet.max}` : '?'],
-      ['Mining', dataQuality.miningDetected ? 'Ja' : 'Nein'],
+      ['Mining', dataQuality.miningStatus === 'active' ? 'aktiv' : dataQuality.miningStatus === 'none' ? 'keine aktive Mission' : 'unbekannt'],
       ['Energie frei', energy && Number.isFinite(energy.free) ? fmtNum(energy.free) : '?'],
       ['Research Cache', `${researchCached}/${dataQuality.cachedBranches.length}`],
       ['Buildings Cache', dataQuality.buildingsCached ? 'Ja' : 'Nein']
@@ -2861,9 +3273,23 @@
           ${dataQuality.cachedBranches.map(branch => `<span class="nlh-pill ${branch.cached ? 'good' : 'warn'}">${esc(branch.label)}: ${branch.cached ? 'cached' : 'fehlt'}</span>`).join('')}
           <span class="nlh-pill ${dataQuality.buildingsCached ? 'good' : 'warn'}">Buildings cached: ${dataQuality.buildingsCached ? 'Ja' : 'Nein'}</span>
           <span class="nlh-pill ${dataQuality.fleetCached ? 'good' : 'warn'}">Fleet cached: ${dataQuality.fleetCached ? 'Ja' : 'Nein'}</span>
-          <span class="nlh-pill ${dataQuality.miningDetected ? 'good' : 'danger'}">Mining erkannt: ${dataQuality.miningDetected ? 'Ja' : 'Nein'}</span>
+          <span class="nlh-pill ${dataQuality.miningStatus === 'active' ? 'good' : dataQuality.miningStatus === 'none' ? 'danger' : 'warn'}">Mining: ${esc(dataQuality.miningStatus)}</span>
           <span class="nlh-pill">Update: ${esc(dataQuality.lastUpdated)}</span>
           <span class="nlh-pill">DOM Dumps: ${esc(dataQuality.domDumpPages.length)}</span>
+        </div>
+        <div class="nlh-footer-note">
+          Aktueller Tab: ${esc(dataQuality.currentTab)} · Cache-Alter:
+          ${Object.entries(dataQuality.cacheAges).map(([key, meta]) => `${esc(key)} ${esc(meta.age)}${meta.stale ? ' stale' : ''}`).join(' · ')}
+        </div>
+        <div class="nlh-footer-note">
+          Parser-Kandidaten: Fleet ${esc(dataQuality.parserDiagnostics.fleetSlotCandidates.length)} ·
+          verworfene Fleet-Slot-Kandidaten ${esc(dataQuality.parserDiagnostics.rejectedFleetSlotCandidates.length)} ·
+          Research-Lab-Level-Kandidaten ${esc(dataQuality.parserDiagnostics.researchLabLevelCandidates.length)} ·
+          verworfene Level-Kandidaten ${esc(dataQuality.parserDiagnostics.rejectedLevelCandidates.length)}
+        </div>
+        <div class="nlh-footer-note">
+          finale Recommendation-Liste: ${esc(dataQuality.recommendations.length)} ·
+          Top-Empfehlung: ${esc(dataQuality.parserDiagnostics.finalTopRecommendation?.title || 'unbekannt')}
         </div>
         <button class="nlh-debug-copy">Debug kopieren</button>
         <button class="nlh-debug-copy data-dump-current">DOM Dump kopieren</button>
@@ -2890,6 +3316,7 @@
   }
 
   function getCurrentDebugData() {
+    resetParserDiagnostics();
     const resources = getResources();
     const buildings = getBuildings();
     const research = getResearch();
@@ -2897,8 +3324,9 @@
     const advisor = getBuildingAdvisor(resources, buildings, research, fleet);
     const goalState = buildGoalState(resources, buildings, research, fleet);
     const nextAction = buildNextActionPlanner(resources, buildings, research, fleet, goalState, advisor);
+    const recommendations = buildGlobalRecommendations(resources, buildings, research, fleet, advisor, nextAction);
 
-    return buildDataQuality(resources, buildings, research, fleet, nextAction, advisor);
+    return buildDataQuality(resources, buildings, research, fleet, nextAction, advisor, recommendations);
   }
 
   function writeDebugOutput(output, successText) {
@@ -3046,6 +3474,7 @@
 
     if (!panel) return;
 
+    resetParserDiagnostics();
     const resources = getResources();
     const buildings = getBuildings();
     const research = getResearch();
@@ -3058,8 +3487,9 @@
     const nextActionPlanner = buildNextActionPlanner(resources, buildings, research, fleet, goalState, buildingAdvisor);
     const researchPlan = buildResearchDependencyPlan('Anomaly Scanning', research, buildings);
     const sessionPlan = buildSessionPlan(resources, buildings, research, fleet, nextActionPlanner, buildingAdvisor);
+    const recommendations = buildGlobalRecommendations(resources, buildings, research, fleet, buildingAdvisor, nextActionPlanner);
     captureDomDump();
-    const dataQuality = buildDataQuality(resources, buildings, research, fleet, nextActionPlanner, buildingAdvisor);
+    const dataQuality = buildDataQuality(resources, buildings, research, fleet, nextActionPlanner, buildingAdvisor, recommendations);
     const actionList = actions(resources, buildings, research);
     const warningList = warnings(resources, fleet);
     const runningBuildings = buildings.filter(building => building.isUpgrading);

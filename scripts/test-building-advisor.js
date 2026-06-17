@@ -1,6 +1,7 @@
 const assert = require('assert');
 const fs = require('fs');
 const path = require('path');
+const vm = require('vm');
 
 const root = path.resolve(__dirname, '..');
 const source = fs.readFileSync(path.join(root, 'nexus-legacy-helper.user.js'), 'utf8');
@@ -9,8 +10,42 @@ function includes(text, message) {
   assert(source.includes(text), message || `Expected source to include ${text}`);
 }
 
-includes('@version      0.7.8', 'userscript header version should be 0.7.8');
-includes('<span class="nlh-version">v0.7.8</span>', 'panel version should be v0.7.8');
+function extractFunction(name) {
+  const start = source.indexOf(`function ${name}`);
+  assert(start >= 0, `Expected function ${name} to exist`);
+  const signatureEnd = source.indexOf(') {', start);
+  assert(signatureEnd >= 0, `Expected function ${name} signature to end with ) {`);
+  const open = signatureEnd + 2;
+  let depth = 0;
+
+  for (let index = open; index < source.length; index += 1) {
+    const char = source[index];
+    if (char === '{') depth += 1;
+    if (char === '}') depth -= 1;
+    if (depth === 0) return source.slice(start, index + 1);
+  }
+
+  throw new Error(`Could not extract function ${name}`);
+}
+
+function loadParserSandbox() {
+  const sandbox = {
+    diagnostics: {
+      fleetSlotCandidates: [],
+      rejectedFleetSlotCandidates: [],
+      researchLabLevelCandidates: [],
+      rejectedLevelCandidates: []
+    }
+  };
+  vm.createContext(sandbox);
+  vm.runInContext('function getParserDiagnostics() { return diagnostics; }', sandbox);
+  vm.runInContext(`${extractFunction('parseFleetSlotsSafe')}; this.parseFleetSlotsSafe = parseFleetSlotsSafe;`, sandbox);
+  vm.runInContext(`${extractFunction('parseLevelFromLabel')}; this.parseLevelFromLabel = parseLevelFromLabel;`, sandbox);
+  return sandbox;
+}
+
+includes('@version      0.7.9', 'userscript header version should be 0.7.9');
+includes('<span class="nlh-version">v0.7.9</span>', 'panel version should be v0.7.9');
 
 [
   'function getBuildingAdvisor(resources, buildings, researchItems, fleetState)',
@@ -45,6 +80,76 @@ includes('<span class="nlh-version">v0.7.8</span>', 'panel version should be v0.
   'function getBuildingAdvisorWarnings(building, context)',
   'function renderBuildingAdvisor(advisor)'
 ].forEach(fn => includes(fn, `${fn} should exist`));
+
+[
+  'const CACHE_TTL = {',
+  'function cacheMeta(section, updatedAt)',
+  'function isCacheStale(section, updatedAt)',
+  'function markCacheUpdate(snapshots, section)',
+  'function parseFleetSlotsSafe(text)',
+  'function chooseFleetSlotCandidate(candidates)',
+  'function parseLevelFromLabel(text, labels, options = {})',
+  'function getParserDiagnostics()',
+  'function buildGlobalRecommendations(resources, buildings, researchItems, fleetState, buildingAdvisor, nextActionPlanner)',
+  'function sortRecommendations(recommendations)',
+  "id: 'fleet_slots_available'",
+  "source: ['fleet-cache', 'global-state']",
+  "source: ['research-cache', 'global-state']",
+  "source: ['mining-cache', 'global-state']",
+  "miningStatus: fleet.miningStatus || 'unknown'",
+  "if (isMiningContext(path))",
+  "Mining unbekannt",
+  "Fleet/Missions-Tab noch nicht aktuell gescannt",
+  "Parser-Kandidaten",
+  "verworfene Fleet-Slot-Kandidaten",
+  "Research-Lab-Level-Kandidaten",
+  "Cache-Alter",
+  "finale Recommendation-Liste",
+  "Top-Empfehlung"
+].forEach(text => includes(text, `Expected v0.7.9 hardening hook: ${text}`));
+
+const fleetParserBody = source.slice(
+  source.indexOf('function parseFleetSlotsSafe(text)'),
+  source.indexOf('function chooseFleetSlotCandidate(candidates)')
+);
+assert(fleetParserBody.includes('(\\d{1,2})\\s*\\/\\s*(\\d{1,2})'), 'fleet parser should only accept one- or two-digit slot fractions');
+assert(fleetParserBody.includes('max > 20'), 'fleet parser should reject implausible max slots');
+assert(fleetParserBody.includes('used > max'), 'fleet parser should reject used slots above max');
+assert(!fleetParserBody.includes('(\\d+)\\s*\\/\\s*(\\d+)'), 'fleet parser must not accept arbitrary long fractions such as 59229/3');
+
+const levelParserBody = source.slice(
+  source.indexOf('function parseLevelFromLabel(text, labels, options = {})'),
+  source.indexOf('function currentResearchBranch()')
+);
+assert(levelParserBody.includes('\\\\d{1,2}'), 'level parser should only accept one- or two-digit levels');
+assert(levelParserBody.includes('level > 99'), 'level parser should reject impossible levels such as 331');
+assert(levelParserBody.includes('Research Lab') && levelParserBody.includes('Research Laboratory'), 'research lab labels should be explicit');
+
+assert(!source.includes("Lab Level 331'"), 'source should not preserve Lab Level 331 as an accepted fixture');
+assert(!source.includes('59229/3`.'), 'source should not document 59229/3 as a valid fleet value');
+
+const parserSandbox = loadParserSandbox();
+assert.strictEqual(parserSandbox.parseFleetSlotsSafe('59229/3'), null, 'fleet parser should reject 59229/3');
+assert.deepStrictEqual(
+  (({ usedSlots, maxSlots, freeSlots }) => ({ usedSlots, maxSlots, freeSlots }))(parserSandbox.parseFleetSlotsSafe('2/3')),
+  { usedSlots: 2, maxSlots: 3, freeSlots: 1 },
+  'fleet parser should accept 2/3'
+);
+assert.deepStrictEqual(
+  (({ usedSlots, maxSlots, freeSlots }) => ({ usedSlots, maxSlots, freeSlots }))(parserSandbox.parseFleetSlotsSafe('Fleet Slots: 2 / 3')),
+  { usedSlots: 2, maxSlots: 3, freeSlots: 1 },
+  'fleet parser should accept Fleet Slots: 2 / 3'
+);
+assert.strictEqual(
+  parserSandbox.parseLevelFromLabel('Lab Level 331', ['Research Lab', 'Research Laboratory', 'Forschungslabor', 'Lab'], { allowShortLab: true }),
+  null,
+  'level parser should reject Lab Level 331'
+);
+assert.strictEqual(
+  parserSandbox.parseLevelFromLabel('Research Lab Level 7', ['Research Lab', 'Research Laboratory', 'Forschungslabor', 'Lab'], { allowShortLab: true }),
+  7,
+  'level parser should accept Research Lab Level 7'
+);
 
 [
   'const isCompleted',
@@ -155,4 +260,4 @@ includes("defaultOpen: false,\n        badge: buildingAdvisor.recommended", 'bui
 const bodyRenderMatches = source.match(/panel\.querySelector\('\.nlh-body'\)\.innerHTML =/g) || [];
 assert.strictEqual(bodyRenderMatches.length, 1, 'render should assign .nlh-body innerHTML once');
 
-console.log('v0.7.8 planner source checks passed');
+console.log('v0.7.9 planner source checks passed');

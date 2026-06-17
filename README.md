@@ -59,6 +59,8 @@ For best results, open these pages once so the helper can cache visible data loc
 - Research -> Economy
 - Research -> Military
 
+If a page has not been scanned recently, the overlay keeps the last valid cache data but marks that area as stale or unknown. For example, Buildings will not claim there are no Mining missions just because Fleet/Missions data is missing.
+
 ## Updates
 
 Tampermonkey can update the script from GitHub because the userscript contains:
@@ -91,6 +93,7 @@ Current features include:
 - next building recommendation
 - building priority order
 - data quality/debug status
+- cache freshness and parser diagnostics
 - first-time onboarding hints
 - affordability and wait-time estimates
 
