@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.7.10
+
+- Avoid recommending blocked building upgrades as the primary action when the queue is full.
+- Prefer free Fleet Slots as the next useful action when cached Fleet data is fresh and buildings are blocked.
+
 ## 0.7.9
 
 - Hardened global recommendation state so tips no longer depend as strongly on the active tab.

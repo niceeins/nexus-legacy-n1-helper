@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Nexus Legacy Helper
 // @namespace    https://niceeins.local/
-// @version      0.7.9
+// @version      0.7.10
 // @description  Passive guide-based helper for Nexus Legacy: resources, build/research hints, affordability, wait times, research/fleet cache. No automation.
 // @match        https://*.nexuslegacy.space/*
 // @match        https://nexuslegacy.space/*
@@ -261,7 +261,7 @@
   function captureDomDump() {
     const key = location.pathname + location.search;
     const dump = {
-      version: '0.7.9',
+      version: '0.7.10',
       capturedAt: new Date().toISOString(),
       path: key,
       title: document.title,
@@ -291,7 +291,7 @@
 
   function getDomDumpPayload() {
     return {
-      version: '0.7.9',
+      version: '0.7.10',
       exportedAt: new Date().toISOString(),
       pages: getAllDomDumps()
     };
@@ -1328,6 +1328,14 @@
     return 'wartet';
   }
 
+  function isUsablePrimaryItem(item) {
+    if (!item) return false;
+    if (item.actionState === 'blockiert' || item.isBlocked) return false;
+    if (/queue full|planet busy/i.test(item.buttonText || '')) return false;
+    if (item.isUpgrading) return false;
+    return true;
+  }
+
   function confidenceFromData(blockers, secondaryActions) {
     const dataHints = [...blockers, ...secondaryActions].filter(item => /Daten|öffnen|Cache|Branch/i.test(item));
     if (!dataHints.length) return 'Hoch';
@@ -1515,7 +1523,12 @@
       primaryAction = `${researchPlan.nextResearch.name} starten`;
       primaryItem = researchPlan.nextResearch.item;
       explanation = 'Das nächste sichtbare Research im Dependency-Plan ist startbar.';
-    } else if (buildingAdvisor.recommended) {
+    } else if (fleetState.free > 0) {
+      primaryAction = `Fleet Slot nutzen: ${fleetState.free}/${fleetState.max} Slots frei`;
+      explanation = fleetState.hasMining
+        ? 'Mining läuft. Freie Slots für Scouting, Salvage oder weitere Missionen prüfen.'
+        : 'Freie Fleet-Slots sind guide-relevant und die Gebäude-Queue liefert gerade keine nutzbare Top-Aktion.';
+    } else if (buildingAdvisor.recommended && isUsablePrimaryItem(buildingAdvisor.recommended)) {
       primaryAction = `${buildingAdvisor.recommended.name} auf Lv${buildingAdvisor.recommended.targetLevel} bringen`;
       primaryItem = buildingAdvisor.recommended;
       explanation = buildingAdvisor.recommended.reason || explanation;
@@ -1614,7 +1627,7 @@
     const parserDiagnostics = getParserDiagnostics();
 
     return {
-      version: '0.7.9',
+      version: '0.7.10',
       path: location.pathname + location.search,
       currentTab: parserDiagnostics.currentTab,
       cachedBranches,
@@ -2149,7 +2162,7 @@
       <div class="nlh-header">
         <div class="nlh-title">
           <strong>Nexus Helper</strong>
-          <span class="nlh-version">v0.7.9</span>
+          <span class="nlh-version">v0.7.10</span>
         </div>
         <div class="nlh-rail-status"></div>
         <div class="nlh-actions">
